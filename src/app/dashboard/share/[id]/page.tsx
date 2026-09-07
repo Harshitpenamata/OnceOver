@@ -12,21 +12,28 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
   const [comments, setComments] = useState<ShareComment[]>([]);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
-  const [shareUrl, setShareUrl] = useState("");
+  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/s/` : "";
 
-  async function load() {
-    const res = await fetch(`/api/shares/${id}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    setShare(data.share);
-    setViews(data.views);
-    setComments(data.comments);
+  function load() {
+    fetch(`/api/shares/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setShare(data.share);
+        setViews(data.views);
+        setComments(data.comments);
+      });
   }
 
   useEffect(() => {
-    load();
-    setShareUrl(`${window.location.origin}/s/`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetch(`/api/shares/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setShare(data.share);
+        setViews(data.views);
+        setComments(data.comments);
+      });
   }, [id]);
 
   async function handleReply(e: React.FormEvent) {
