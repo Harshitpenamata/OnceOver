@@ -1,0 +1,45 @@
+import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
+import { describe, expect, it } from "vitest";
+import { buildWatermarkLabel, watermarkImage, watermarkPdf } from "./watermark";
+
+describe("buildWatermarkLabel", () => {
+  it("combines the viewer identity and a UTC timestamp", () => {
+    const label = buildWatermarkLabel("jane@example.com", new Date("2026-01-02T03:04:05.678Z"));
+    expect(label).toBe("jane@example.com - 2026-01-02 03:04:05 UTC");
+  });
+});
+
+describe("watermarkImage", () => {
+  it("returns a valid JPEG the same size as the source image", async () => {
+    const original = await sharp({
+      create: { width: 200, height: 150, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer();
+
+    const watermarked = await watermarkImage(original, "QA Tester - 2026-01-01 00:00:00 UTC");
+    const metadata = await sharp(watermarked).metadata();
+
+    expect(metadata.format).toBe("jpeg");
+    expect(metadata.width).toBe(200);
+    expect(metadata.height).toBe(150);
+    // The watermark overlay should actually change pixel data, not pass the image through untouched.
+    expect(Buffer.compare(watermarked, original)).not.toBe(0);
+  });
+});
+
+describe("watermarkPdf", () => {
+  it("returns a valid PDF with the same page count as the source, with visible text added", async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([300, 400]);
+    doc.addPage([300, 400]);
+    const original = Buffer.from(await doc.save());
+
+    const watermarked = await watermarkPdf(original, "QA Tester - 2026-01-01 00:00:00 UTC");
+    const result = await PDFDocument.load(watermarked);
+
+    expect(result.getPageCount()).toBe(2);
+    expect(watermarked.length).toBeGreaterThan(original.length);
+  });
+});

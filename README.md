@@ -79,6 +79,27 @@ Open [http://localhost:3000](http://localhost:3000).
 6. `/api/cron/cleanup`, triggered every 15 minutes by [`vercel.json`](./vercel.json), sweeps any
    share whose time or view limit has passed and permanently deletes the R2 object.
 
+## Testing
+
+```bash
+npm test        # unit tests (expiry logic, watermarking) - no external services needed
+npm run test:e2e  # integration test against a REAL Supabase/R2/Resend backend
+```
+
+`npm test` runs [Vitest](https://vitest.dev) against the pure logic in `src/lib` — `isExpired()`
+and the Sharp/pdf-lib watermark functions — and needs nothing but `npm install`.
+
+`npm run test:e2e` runs [`scripts/e2e-test.mjs`](./scripts/e2e-test.mjs), which drives the actual
+API routes over HTTP against your real `.env.local` credentials: signup/login, an authenticated
+upload, a genuinely concurrent race on a 1-view link (this is what originally caught a
+delete-before-read bug in the expiry logic that unit tests alone did not), the PDF watermark
+path, and the `/api/cron/cleanup` sweep. It requires `npm run dev` running in another terminal
+and creates/cleans up its own test data:
+
+```bash
+set -a && source .env.local && set +a && npm run test:e2e
+```
+
 ## Deploying
 
 Deploy to Vercel and add the same environment variables from `.env.local` to the project's
