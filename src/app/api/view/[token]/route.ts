@@ -53,10 +53,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     .single<{ accepted: boolean; view_count: number; newly_expired: boolean }>();
   if (recordError) return NextResponse.json({ error: recordError.message }, { status: 500 });
 
-  if (recorded.newly_expired) {
-    await deleteOriginal(share.storage_key).catch(() => {});
-  }
   if (!recorded.accepted) {
+    // Rejected before ever reading the file - safe to delete right away if
+    // this call is the one discovering the expiry (e.g. a time-based expiry
+    // nobody had hit yet).
+    if (recorded.newly_expired) {
+      await deleteOriginal(share.storage_key).catch(() => {});
+    }
     return NextResponse.json({ error: "This file has expired" }, { status: 410 });
   }
 
@@ -75,6 +78,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const label = buildWatermarkLabel(identity, viewedAt);
   const watermarked =
     share.file_type === "image" ? await watermarkImage(original, label) : await watermarkPdf(original, label);
+
+  // Only safe to delete now that the original has actually been read: when
+  // this view was itself the one that hit the view-count limit, it's still
+  // owed the file - deleting before getOriginal() above would 404 the very
+  // viewer who was supposed to receive it.
+  if (recorded.newly_expired) {
+    await deleteOriginal(share.storage_key).catch(() => {});
+  }
 
   const { data: owner } = await admin.auth.admin.getUserById(share.owner_id);
   if (owner?.user?.email) {
