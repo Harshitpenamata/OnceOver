@@ -1,0 +1,74 @@
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
+import { AppNav } from "@/components/AppNav";
+import { StatusBadge } from "@/components/StatusBadge";
+
+export default async function DashboardPage() {
+  const supabase = await createClient();
+  const { data: shares } = await supabase
+    .from("shares")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  return (
+    <div className="flex flex-1 flex-col bg-zinc-50">
+      <AppNav />
+      <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10">
+        <h1 className="text-2xl font-semibold text-zinc-900">Your shares</h1>
+        <p className="mt-1 text-sm text-zinc-500">
+          Every file you&apos;ve sent, its expiry status, and who&apos;s opened it.
+        </p>
+
+        {!shares?.length ? (
+          <div className="mt-10 rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center">
+            <p className="text-zinc-500">You haven&apos;t shared anything yet.</p>
+            <Link
+              href="/upload"
+              className="mt-4 inline-block rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+            >
+              Share your first file
+            </Link>
+          </div>
+        ) : (
+          <div className="mt-6 overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-zinc-200 bg-zinc-50 text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 font-medium">File</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Decision</th>
+                  <th className="px-4 py-3 font-medium">Views</th>
+                  <th className="px-4 py-3 font-medium">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shares.map((share) => (
+                  <tr key={share.id} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                    <td className="px-4 py-3">
+                      <Link href={`/dashboard/share/${share.id}`} className="font-medium text-zinc-900 hover:underline">
+                        {share.original_filename}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge label={share.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge label={share.decision} />
+                    </td>
+                    <td className="px-4 py-3 text-zinc-600">
+                      {share.view_count}
+                      {share.max_views ? ` / ${share.max_views}` : ""}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-500">
+                      {new Date(share.created_at).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
