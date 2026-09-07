@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from "pdf-lib";
+import { PDFDict, PDFDocument, PDFName, StandardFonts, degrees, rgb } from "pdf-lib";
 
 // Burns a repeating diagonal watermark (viewer identity + timestamp) directly
 // into the pixels of an image, so it survives cropping/screenshotting an
@@ -65,15 +65,31 @@ export async function watermarkPdf(original: Buffer, label: string): Promise<Buf
 
 // Strips the PDF's active-content vectors before it's ever served: an
 // OpenAction/AA can auto-run JavaScript the instant a viewer opens the file,
-// and the Names tree is where embedded JavaScript and embedded files (which
-// can be anything, including executables) live. This app only needs to
-// display pages, so none of this is functionality anyone loses.
+// the Names tree is where embedded JavaScript and embedded files (which can
+// be anything, including executables) live, and AcroForm fields can carry
+// their own AA triggers (on-focus/on-blur/on-calculate) independent of all
+// of the above - a distinct, well-documented PDF-malware vector. This app
+// only needs to display pages, so none of this is functionality anyone loses.
 function sanitizePdf(doc: PDFDocument): void {
   doc.catalog.delete(PDFName.of("OpenAction"));
   doc.catalog.delete(PDFName.of("AA"));
   doc.catalog.delete(PDFName.of("Names"));
+  doc.catalog.delete(PDFName.of("AcroForm"));
+
   for (const page of doc.getPages()) {
     page.node.delete(PDFName.of("AA"));
+
+    // Annotation objects (including form field widgets) are referenced
+    // independently from each page's own Annots array, so their AA/A
+    // triggers survive even after the AcroForm dict itself is gone.
+    const annots = page.node.Annots();
+    if (annots) {
+      for (let i = 0; i < annots.size(); i++) {
+        const annot = doc.context.lookupMaybe(annots.get(i), PDFDict);
+        annot?.delete(PDFName.of("AA"));
+        annot?.delete(PDFName.of("A"));
+      }
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { PDFDocument, PDFName, PDFString } from "pdf-lib";
+import { PDFDict, PDFDocument, PDFName, PDFString } from "pdf-lib";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { buildWatermarkLabel, watermarkImage, watermarkPdf } from "./watermark";
@@ -67,5 +67,44 @@ describe("watermarkPdf", () => {
 
     expect(result.catalog.get(PDFName.of("OpenAction"))).toBeUndefined();
     expect(result.catalog.get(PDFName.of("Names"))).toBeUndefined();
+  });
+
+  it("strips AcroForm and per-annotation AA triggers (a JS vector independent of OpenAction)", async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([300, 400]);
+
+    const aaAction = doc.context.obj({
+      Type: PDFName.of("Action"),
+      S: PDFName.of("JavaScript"),
+      JS: PDFString.of('app.alert("field pwned")'),
+    });
+    const fieldDict = doc.context.obj({
+      Type: PDFName.of("Annot"),
+      Subtype: PDFName.of("Widget"),
+      Rect: [0, 0, 100, 20],
+      FT: PDFName.of("Tx"),
+      AA: doc.context.obj({ F: doc.context.register(aaAction) }),
+    });
+    const fieldRef = doc.context.register(fieldDict);
+    page.node.set(PDFName.of("Annots"), doc.context.obj([fieldRef]));
+    doc.catalog.set(
+      PDFName.of("AcroForm"),
+      doc.context.register(doc.context.obj({ Fields: [fieldRef] }))
+    );
+
+    // Sanity check the fixture actually has them before we assert they're gone.
+    expect(doc.catalog.get(PDFName.of("AcroForm"))).toBeDefined();
+    expect(fieldDict.get(PDFName.of("AA"))).toBeDefined();
+
+    const original = Buffer.from(await doc.save());
+    const watermarked = await watermarkPdf(original, "QA Tester - 2026-01-01 00:00:00 UTC");
+    const result = await PDFDocument.load(watermarked);
+
+    expect(result.catalog.get(PDFName.of("AcroForm"))).toBeUndefined();
+
+    const resultAnnots = result.getPages()[0].node.Annots();
+    expect(resultAnnots).toBeDefined();
+    const resultField = result.context.lookupMaybe(resultAnnots!.get(0), PDFDict);
+    expect(resultField?.get(PDFName.of("AA"))).toBeUndefined();
   });
 });
