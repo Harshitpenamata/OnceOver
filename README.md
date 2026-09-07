@@ -103,5 +103,13 @@ set -a && source .env.local && set +a && npm run test:e2e
 ## Deploying
 
 Deploy to Vercel and add the same environment variables from `.env.local` to the project's
-environment variable settings. The cron schedule in `vercel.json` is picked up automatically on
-Vercel; `CRON_SECRET` authorizes those requests via the `Authorization: Bearer` header.
+environment variable settings (update `NEXT_PUBLIC_APP_URL` to the production URL). The cron
+schedule in `vercel.json` is picked up automatically on Vercel; `CRON_SECRET` authorizes those
+requests via the `Authorization: Bearer` header.
+
+The cron runs once daily (`0 3 * * *`) rather than every 15 minutes - Vercel's free Hobby plan
+caps Cron Jobs at once per day, and a more frequent schedule fails validation on that plan. A
+share that expires by time but is never opened just sits in R2 until the next daily sweep; a
+share someone actually tries to open past its expiry is still deleted immediately by the view
+route regardless of the cron. If you're on Vercel Pro, tighten the schedule back to `*/15 * * * *`
+for faster cleanup of never-opened expired shares.
