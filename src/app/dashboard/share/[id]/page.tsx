@@ -14,26 +14,23 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
   const [sending, setSending] = useState(false);
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/s/` : "";
 
-  function load() {
-    fetch(`/api/shares/${id}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data) return;
-        setShare(data.share);
-        setViews(data.views);
-        setComments(data.comments);
-      });
+  // Deliberately returns data rather than calling setState itself: an effect
+  // is only allowed to call setState from its own body/callback, not from a
+  // named function it invokes, so the fetch is shared while each call site
+  // (the mount effect, the post-reply refresh) applies the result itself.
+  async function fetchShareData() {
+    const res = await fetch(`/api/shares/${id}`);
+    return res.ok ? res.json() : null;
   }
 
   useEffect(() => {
-    fetch(`/api/shares/${id}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data) return;
-        setShare(data.share);
-        setViews(data.views);
-        setComments(data.comments);
-      });
+    fetchShareData().then((data) => {
+      if (!data) return;
+      setShare(data.share);
+      setViews(data.views);
+      setComments(data.comments);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function handleReply(e: React.FormEvent) {
@@ -48,7 +45,12 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
     setSending(false);
     if (res.ok) {
       setReply("");
-      load();
+      const data = await fetchShareData();
+      if (data) {
+        setShare(data.share);
+        setViews(data.views);
+        setComments(data.comments);
+      }
     }
   }
 

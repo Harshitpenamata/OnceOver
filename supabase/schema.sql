@@ -93,3 +93,64 @@ create policy "owners insert comments as sender"
     author_type = 'sender'
     and exists (select 1 from public.shares s where s.id = share_id and s.owner_id = auth.uid())
   );
+
+-- ---------------------------------------------------------------------------
+-- record_view: atomically enforces the expiry rules and increments the view
+-- counter. A plain "read view_count, add one, write it back" in application
+-- code is a check-then-act race - two near-simultaneous opens of a
+-- "1 view only" link can both read view_count=0 and both get served the
+-- file. Locking the row with `for update` serializes concurrent callers so
+-- only the caller(s) actually within the limit are accepted.
+-- ---------------------------------------------------------------------------
+create or replace function public.record_view(p_share_id uuid)
+returns table (accepted boolean, view_count integer, newly_expired boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_max_views  integer;
+  v_expires_at timestamptz;
+  v_view_count integer;
+  v_status     text;
+  v_expired    boolean;
+  v_newly_expired boolean := false;
+begin
+  select s.max_views, s.expires_at, s.view_count, s.status
+  into v_max_views, v_expires_at, v_view_count, v_status
+  from public.shares s
+  where s.id = p_share_id
+  for update;
+
+  if not found then
+    return query select false, 0, false;
+    return;
+  end if;
+
+  v_expired := v_status <> 'active'
+    or (v_expires_at is not null and v_expires_at <= now())
+    or (v_max_views is not null and v_view_count >= v_max_views);
+
+  if v_expired then
+    if v_status = 'active' then
+      update public.shares set status = 'expired', deleted_at = now() where id = p_share_id;
+      v_newly_expired := true;
+    end if;
+    return query select false, v_view_count, v_newly_expired;
+    return;
+  end if;
+
+  v_view_count := v_view_count + 1;
+
+  if v_max_views is not null and v_view_count >= v_max_views then
+    update public.shares set view_count = v_view_count, status = 'expired', deleted_at = now() where id = p_share_id;
+    v_newly_expired := true;
+  else
+    update public.shares set view_count = v_view_count where id = p_share_id;
+  end if;
+
+  return query select true, v_view_count, v_newly_expired;
+end;
+$$;
+
+grant execute on function public.record_view(uuid) to service_role;

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { sendCommentNotification } from "@/lib/email";
 
 // Sender (authenticated owner) posts a reply in the thread.
@@ -25,10 +24,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     .single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Sender writes go through the admin client too, so the same insert path
-  // (and notification logic) is shared with the recipient-side route.
-  const admin = createAdminClient();
-  const { data: comment, error } = await admin
+  // The "owners insert comments as sender" RLS policy allows this insert
+  // directly through the authenticated client - no need for the service-role
+  // admin client here (that's reserved for the unauthenticated recipient
+  // side, in api/view/[token]/comments, where there's no Supabase user).
+  const { data: comment, error } = await supabase
     .from("share_comments")
     .insert({
       share_id: id,

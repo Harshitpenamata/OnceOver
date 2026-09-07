@@ -136,10 +136,22 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
           <p className="mt-1 text-sm text-zinc-400">
             This file is watermarked with your name and the time you open it.
           </p>
-          <label className="mt-6 block text-sm font-medium text-zinc-300">Your name or email</label>
+          {meta.linkMode === "email" ? (
+            <p className="mt-2 text-sm text-amber-400">
+              This link only opens for the email address it was sent to.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-zinc-500">
+              This isn&apos;t verified - enter whatever identifies you to the sender.
+            </p>
+          )}
+          <label className="mt-6 block text-sm font-medium text-zinc-300">
+            {meta.linkMode === "email" ? "Your email" : "Your name or email"}
+          </label>
           <input
             autoFocus
             required
+            type={meta.linkMode === "email" ? "email" : "text"}
             value={identity}
             onChange={(e) => setIdentity(e.target.value)}
             placeholder="jane@example.com"

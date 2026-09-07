@@ -40,14 +40,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { data: share } = await admin.from("shares").select("*").eq("token", token).single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (isExpired(share)) {
-    if (share.status === "active") await handleExpiry(admin, share);
-    return NextResponse.json({ error: "This file has expired" }, { status: 410 });
-  }
-
   const identity = (viewerIdentity as string | undefined)?.trim() || "Anonymous";
   if (share.link_mode === "email" && identity.toLowerCase() !== share.recipient_email?.toLowerCase()) {
     return NextResponse.json({ error: "This link is restricted to a specific recipient" }, { status: 403 });
+  }
+
+  // record_view locks the share row and enforces the time/view-count limits
+  // atomically, so two near-simultaneous opens of a "1 view only" link can't
+  // both slip through a plain read-then-write increment in application code.
+  const { data: recorded, error: recordError } = await admin
+    .rpc("record_view", { p_share_id: share.id })
+    .single<{ accepted: boolean; view_count: number; newly_expired: boolean }>();
+  if (recordError) return NextResponse.json({ error: recordError.message }, { status: 500 });
+
+  if (recorded.newly_expired) {
+    await deleteOriginal(share.storage_key).catch(() => {});
+  }
+  if (!recorded.accepted) {
+    return NextResponse.json({ error: "This file has expired" }, { status: 410 });
   }
 
   const viewedAt = new Date();
@@ -61,14 +71,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     viewed_at: viewedAt.toISOString(),
   });
 
-  const newViewCount = share.view_count + 1;
-  const nowExpired = share.max_views !== null && newViewCount >= share.max_views;
-
-  await admin
-    .from("shares")
-    .update({ view_count: newViewCount, status: nowExpired ? "expired" : share.status })
-    .eq("id", share.id);
-
   const original = await getOriginal(share.storage_key);
   const label = buildWatermarkLabel(identity, viewedAt);
   const watermarked =
@@ -81,18 +83,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       filename: share.original_filename,
       viewerIdentity: identity,
       viewedAt,
-      viewCount: newViewCount,
+      viewCount: recorded.view_count,
       maxViews: share.max_views,
       dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
     }).catch(() => {});
-  }
-
-  if (nowExpired) {
-    await deleteOriginal(share.storage_key).catch(() => {});
-    await admin
-      .from("shares")
-      .update({ status: "deleted", deleted_at: new Date().toISOString() })
-      .eq("id", share.id);
   }
 
   return new NextResponse(new Uint8Array(watermarked), {
