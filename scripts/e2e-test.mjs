@@ -245,25 +245,36 @@ check("upload share for rate-limit test returns 201", uploadRateLimit.status ===
 const { share: shareRateLimit } = await uploadRateLimit.json();
 createdShareIds.push(shareRateLimit.id);
 
-const rateLimitStatuses = [];
-for (let i = 0; i < 25; i++) {
-  const res = await fetch(`${APP_URL}/api/view/${shareRateLimit.token}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ viewerIdentity: `QA Rate Test ${i}` }),
-  });
-  rateLimitStatuses.push(res.status);
-}
+// Fired concurrently, not sequentially awaited: each of these hits a real
+// share, so the server does genuinely expensive work per request (R2 fetch,
+// Sharp/pdf-lib watermarking, a Supabase RPC, a Resend email send). A
+// sequential loop can take longer in wall-clock time than the 60-second
+// rate-limit window, letting the fixed window roll over mid-burst and never
+// actually accumulate past the limit - that's a test-timing flaw, not
+// evidence the limiter is broken. Concurrent requests land within the same
+// window regardless of how slow the endpoint itself is.
+const rateLimitStatuses = (
+  await Promise.all(
+    Array.from({ length: 25 }, (_, i) =>
+      fetch(`${APP_URL}/api/view/${shareRateLimit.token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewerIdentity: `QA Rate Test ${i}` }),
+      })
+    )
+  )
+).map((res) => res.status);
+
 // Don't assume a clean budget of 20: earlier sections in this same run
-// already made a few view requests from this same IP within the window, so
-// just check the real invariant - once 429 shows up, it never reverts to
-// 200 within this burst, and everything before that was accepted.
-const firstBlockedIndex = rateLimitStatuses.indexOf(429);
+// already made a few view requests from this same IP within the window.
+// Concurrent responses also don't resolve in a guaranteed order, so check
+// the real invariant (some accepted, the rest blocked, nothing else) rather
+// than a strict ordered prefix/suffix split.
+const acceptedCount = rateLimitStatuses.filter((s) => s === 200).length;
+const blockedCount = rateLimitStatuses.filter((s) => s === 429).length;
 check(
-  "rate limit kicks in partway through and stays blocked for the rest of the burst",
-  firstBlockedIndex > 0 &&
-    rateLimitStatuses.slice(0, firstBlockedIndex).every((s) => s === 200) &&
-    rateLimitStatuses.slice(firstBlockedIndex).every((s) => s === 429),
+  "rate limit accepts up to the remaining budget and blocks the rest of the burst",
+  acceptedCount > 0 && acceptedCount <= 20 && acceptedCount + blockedCount === 25,
   `statuses: ${rateLimitStatuses.join(",")}`
 );
 
