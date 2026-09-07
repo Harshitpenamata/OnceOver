@@ -12,11 +12,12 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* This app's UI is deliberately light-only (white cards, zinc-50 pages) with
+   no dark: variants anywhere, so don't let the OS dark-mode preference flip
+   body text to near-white - that made every unstyled input invisible
+   (white text on a white input background). */
+:root {
+  color-scheme: light;
 }
 
 body {

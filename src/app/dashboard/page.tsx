@@ -10,6 +10,22 @@ export default async function DashboardPage() {
     .select("*")
     .order("created_at", { ascending: false });
 
+  const shareIds = shares?.map((s) => s.id) ?? [];
+  const { data: views } = shareIds.length
+    ? await supabase
+        .from("share_views")
+        .select("share_id, viewer_identity")
+        .in("share_id", shareIds)
+        .order("viewed_at", { ascending: true })
+    : { data: [] };
+
+  const viewersByShare = new Map<string, string[]>();
+  for (const v of views ?? []) {
+    const list = viewersByShare.get(v.share_id) ?? [];
+    list.push(v.viewer_identity);
+    viewersByShare.set(v.share_id, list);
+  }
+
   return (
     <div className="flex flex-1 flex-col bg-zinc-50">
       <AppNav />
@@ -38,6 +54,7 @@ export default async function DashboardPage() {
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Decision</th>
                   <th className="px-4 py-3 font-medium">Views</th>
+                  <th className="px-4 py-3 font-medium">Viewed by</th>
                   <th className="px-4 py-3 font-medium">Created</th>
                 </tr>
               </thead>
@@ -58,6 +75,13 @@ export default async function DashboardPage() {
                     <td className="px-4 py-3 text-zinc-600">
                       {share.view_count}
                       {share.max_views ? ` / ${share.max_views}` : ""}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-600">
+                      {(viewersByShare.get(share.id) ?? []).length === 0 ? (
+                        <span className="text-zinc-400">Nobody yet</span>
+                      ) : (
+                        viewersByShare.get(share.id)!.join(", ")
+                      )}
                     </td>
                     <td className="px-4 py-3 text-zinc-500">
                       {new Date(share.created_at).toLocaleString()}
