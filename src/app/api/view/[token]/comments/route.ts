@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendCommentNotification } from "@/lib/email";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
@@ -20,13 +21,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  const admin = createAdminClient();
+
+  if (!(await checkRateLimit(admin, `comment:${getClientIp(request)}`, 10, 60))) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
+
   const { authorName, body } = await request.json();
 
   if (!body || typeof body !== "string" || !body.trim()) {
     return NextResponse.json({ error: "Comment body is required" }, { status: 400 });
   }
 
-  const admin = createAdminClient();
   const { data: share } = await admin
     .from("shares")
     .select("id, owner_id, original_filename")

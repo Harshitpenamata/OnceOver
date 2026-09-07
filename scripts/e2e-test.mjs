@@ -235,6 +235,38 @@ check(
   shareCronRow.status === "expired" && !(await objectExistsInR2(shareCronRow.storage_key))
 );
 
+// --- 5. Rate limiting: the view route is capped at 20 requests/min/IP ------
+console.log("\n== Rate limiting ==");
+const uploadRateLimit = await uploadShare(png, "qa-rate-limit-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+});
+check("upload share for rate-limit test returns 201", uploadRateLimit.status === 201);
+const { share: shareRateLimit } = await uploadRateLimit.json();
+createdShareIds.push(shareRateLimit.id);
+
+const rateLimitStatuses = [];
+for (let i = 0; i < 25; i++) {
+  const res = await fetch(`${APP_URL}/api/view/${shareRateLimit.token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ viewerIdentity: `QA Rate Test ${i}` }),
+  });
+  rateLimitStatuses.push(res.status);
+}
+// Don't assume a clean budget of 20: earlier sections in this same run
+// already made a few view requests from this same IP within the window, so
+// just check the real invariant - once 429 shows up, it never reverts to
+// 200 within this burst, and everything before that was accepted.
+const firstBlockedIndex = rateLimitStatuses.indexOf(429);
+check(
+  "rate limit kicks in partway through and stays blocked for the rest of the burst",
+  firstBlockedIndex > 0 &&
+    rateLimitStatuses.slice(0, firstBlockedIndex).every((s) => s === 200) &&
+    rateLimitStatuses.slice(firstBlockedIndex).every((s) => s === 429),
+  `statuses: ${rateLimitStatuses.join(",")}`
+);
+
 // --- Cleanup ------------------------------------------------------------
 console.log("\n== Cleanup ==");
 for (const id of createdShareIds) {

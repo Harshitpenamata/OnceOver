@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
+import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from "pdf-lib";
 
 // Burns a repeating diagonal watermark (viewer identity + timestamp) directly
 // into the pixels of an image, so it survives cropping/screenshotting an
@@ -32,6 +32,7 @@ export async function watermarkImage(original: Buffer, label: string): Promise<B
 
 export async function watermarkPdf(original: Buffer, label: string): Promise<Buffer> {
   const pdfDoc = await PDFDocument.load(original);
+  sanitizePdf(pdfDoc);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const pages = pdfDoc.getPages();
 
@@ -60,6 +61,20 @@ export async function watermarkPdf(original: Buffer, label: string): Promise<Buf
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
+}
+
+// Strips the PDF's active-content vectors before it's ever served: an
+// OpenAction/AA can auto-run JavaScript the instant a viewer opens the file,
+// and the Names tree is where embedded JavaScript and embedded files (which
+// can be anything, including executables) live. This app only needs to
+// display pages, so none of this is functionality anyone loses.
+function sanitizePdf(doc: PDFDocument): void {
+  doc.catalog.delete(PDFName.of("OpenAction"));
+  doc.catalog.delete(PDFName.of("AA"));
+  doc.catalog.delete(PDFName.of("Names"));
+  for (const page of doc.getPages()) {
+    page.node.delete(PDFName.of("AA"));
+  }
 }
 
 export function buildWatermarkLabel(viewerIdentity: string, viewedAt: Date): string {

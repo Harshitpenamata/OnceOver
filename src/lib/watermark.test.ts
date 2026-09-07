@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { buildWatermarkLabel, watermarkImage, watermarkPdf } from "./watermark";
@@ -41,5 +41,31 @@ describe("watermarkPdf", () => {
 
     expect(result.getPageCount()).toBe(2);
     expect(watermarked.length).toBeGreaterThan(original.length);
+  });
+
+  it("strips OpenAction/JavaScript and the Names tree so an auto-run script can't survive", async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([300, 400]);
+
+    const jsAction = doc.context.obj({
+      Type: PDFName.of("Action"),
+      S: PDFName.of("JavaScript"),
+      JS: PDFString.of('app.alert("pwned")'),
+    });
+    doc.catalog.set(PDFName.of("OpenAction"), doc.context.register(jsAction));
+
+    const namesTree = doc.context.obj({ JavaScript: doc.context.obj({ Names: [] }) });
+    doc.catalog.set(PDFName.of("Names"), doc.context.register(namesTree));
+
+    // Sanity check the fixture actually has them before we assert they're gone.
+    expect(doc.catalog.get(PDFName.of("OpenAction"))).toBeDefined();
+    expect(doc.catalog.get(PDFName.of("Names"))).toBeDefined();
+
+    const original = Buffer.from(await doc.save());
+    const watermarked = await watermarkPdf(original, "QA Tester - 2026-01-01 00:00:00 UTC");
+    const result = await PDFDocument.load(watermarked);
+
+    expect(result.catalog.get(PDFName.of("OpenAction"))).toBeUndefined();
+    expect(result.catalog.get(PDFName.of("Names"))).toBeUndefined();
   });
 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { sendCommentNotification } from "@/lib/email";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Sender (authenticated owner) posts a reply in the thread.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -10,6 +11,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (!(await checkRateLimit(supabase, `sender-comment:${user.id}`, 30, 60))) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
 
   const { body } = await request.json();
   if (!body || typeof body !== "string" || !body.trim()) {

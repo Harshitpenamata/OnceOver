@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // Recipients aren't authenticated Supabase users, so decisions are recorded
 // via the admin client after validating the share token supplied by the client.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const admin = createAdminClient();
+
+  if (!(await checkRateLimit(admin, `decision:${getClientIp(request)}`, 10, 60))) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
+
   const { token, decision } = await request.json();
 
   if (decision !== "approved" && decision !== "rejected") {
@@ -12,7 +19,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   if (!token) return NextResponse.json({ error: "token is required" }, { status: 400 });
 
-  const admin = createAdminClient();
   const { data: share } = await admin
     .from("shares")
     .select("id, token")

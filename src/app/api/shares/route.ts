@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { uploadOriginal } from "@/lib/r2";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const ALLOWED_TYPES: Record<string, "image" | "pdf"> = {
   "image/png": "image",
@@ -35,6 +36,10 @@ export async function POST(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (!(await checkRateLimit(supabase, `upload:${user.id}`, 20, 60 * 60))) {
+    return NextResponse.json({ error: "Too many uploads - try again later" }, { status: 429 });
+  }
 
   const form = await request.formData();
   const file = form.get("file");

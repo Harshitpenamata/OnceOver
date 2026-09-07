@@ -4,11 +4,16 @@ import { getOriginal, deleteOriginal } from "@/lib/r2";
 import { watermarkImage, watermarkPdf, buildWatermarkLabel } from "@/lib/watermark";
 import { sendViewNotification } from "@/lib/email";
 import { isExpired } from "@/lib/expiry";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // Metadata for the gate page (identity prompt / expired state) - no file bytes yet.
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const admin = createAdminClient();
+
+  if (!(await checkRateLimit(admin, `view-meta:${getClientIp(request)}`, 60, 60))) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
 
   const { data: share } = await admin.from("shares").select("*").eq("token", token).single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -36,6 +41,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { token } = await params;
   const { viewerIdentity } = await request.json();
   const admin = createAdminClient();
+  const clientIp = getClientIp(request);
+
+  if (!(await checkRateLimit(admin, `view:${clientIp}`, 20, 60))) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
 
   const { data: share } = await admin.from("shares").select("*").eq("token", token).single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -64,12 +74,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const viewedAt = new Date();
-  const forwardedFor = request.headers.get("x-forwarded-for");
 
   await admin.from("share_views").insert({
     share_id: share.id,
     viewer_identity: identity,
-    viewer_ip: forwardedFor?.split(",")[0]?.trim() ?? null,
+    viewer_ip: clientIp === "unknown" ? null : clientIp,
     user_agent: request.headers.get("user-agent"),
     viewed_at: viewedAt.toISOString(),
   });

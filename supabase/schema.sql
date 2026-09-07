@@ -154,3 +154,49 @@ end;
 $$;
 
 grant execute on function public.record_view(uuid) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- rate_limits / check_rate_limit: a fixed-window rate limiter backed by
+-- Postgres rather than in-memory state. The app runs on Vercel's stateless
+-- serverless functions, where in-memory counters don't persist reliably
+-- across invocations - state has to live somewhere shared, and this reuses
+-- infrastructure already in place instead of adding a separate service.
+-- ---------------------------------------------------------------------------
+create table if not exists public.rate_limits (
+  key         text primary key,
+  window_start timestamptz not null default now(),
+  count       integer not null default 0
+);
+
+alter table public.rate_limits enable row level security;
+-- No policies: only reachable through the security-definer function below.
+
+create or replace function public.check_rate_limit(p_key text, p_max_attempts integer, p_window_seconds integer)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  insert into public.rate_limits (key, window_start, count)
+  values (p_key, now(), 1)
+  on conflict (key) do update
+  set count = case
+        when public.rate_limits.window_start <= now() - make_interval(secs => p_window_seconds)
+          then 1
+        else public.rate_limits.count + 1
+      end,
+      window_start = case
+        when public.rate_limits.window_start <= now() - make_interval(secs => p_window_seconds)
+          then now()
+        else public.rate_limits.window_start
+      end
+  returning count into v_count;
+
+  return v_count <= p_max_attempts;
+end;
+$$;
+
+grant execute on function public.check_rate_limit(text, integer, integer) to anon, authenticated, service_role;
