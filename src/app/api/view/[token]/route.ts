@@ -39,7 +39,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 // Records the view, burns the watermark in, and streams the file back.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const { viewerIdentity } = await request.json();
+  const { viewerIdentity, code } = await request.json();
   const admin = createAdminClient();
   const clientIp = getClientIp(request);
 
@@ -50,9 +50,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { data: share } = await admin.from("shares").select("*").eq("token", token).single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const identity = (viewerIdentity as string | undefined)?.trim() || "Anonymous";
-  if (share.link_mode === "email" && identity.toLowerCase() !== share.recipient_email?.toLowerCase()) {
-    return NextResponse.json({ error: "This link is restricted to a specific recipient" }, { status: 403 });
+  let identity: string;
+  if (share.link_mode === "email") {
+    // The emailed one-time code is the actual proof of identity here - once
+    // it's verified, the watermark uses the share's own recipient_email
+    // rather than trusting whatever the client sent as viewerIdentity.
+    const { data: codeValid, error: otpError } =
+      typeof code === "string"
+        ? await admin.rpc("verify_share_otp", { p_share_id: share.id, p_code: code })
+        : { data: false, error: null };
+    if (otpError || !codeValid) {
+      return NextResponse.json({ error: "Invalid or expired code" }, { status: 403 });
+    }
+    identity = share.recipient_email!;
+  } else {
+    identity = (viewerIdentity as string | undefined)?.trim() || "Anonymous";
   }
 
   // record_view locks the share row and enforces the time/view-count limits

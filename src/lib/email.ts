@@ -38,6 +38,21 @@ export async function sendViewNotification(opts: {
   });
 }
 
+export async function sendOtpEmail(opts: { to: string; filename: string; code: string }) {
+  const { to, filename, code } = opts;
+
+  await getResendClient().emails.send({
+    from: FROM,
+    to,
+    subject: `Your code to view ${filename}`,
+    html: `
+      <p>Use this code to confirm it's you before viewing <strong>${escapeHtml(filename)}</strong>:</p>
+      <p style="font-size: 32px; font-weight: 700; letter-spacing: 4px;">${escapeHtml(code)}</p>
+      <p>This code expires in 10 minutes and can only be used once.</p>
+    `,
+  });
+}
+
 export async function sendCommentNotification(opts: {
   to: string;
   filename: string;

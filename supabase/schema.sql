@@ -200,3 +200,64 @@ end;
 $$;
 
 grant execute on function public.check_rate_limit(text, integer, integer) to anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- share_otps / verify_share_otp: proves the viewer of an email-locked share
+-- actually controls the recipient inbox, not just that they know/guessed the
+-- address. A plaintext, single-use, 10-minute code is a reasonable tradeoff
+-- here (not a long-lived credential like a password) - it's already gated by
+-- request-rate-limiting per share and a per-code attempt cap below.
+-- ---------------------------------------------------------------------------
+create table if not exists public.share_otps (
+  id          uuid primary key default gen_random_uuid(),
+  share_id    uuid not null references public.shares(id) on delete cascade,
+  code        text not null,
+  attempts    integer not null default 0,
+  expires_at  timestamptz not null,
+  consumed_at timestamptz,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists share_otps_share_id_idx on public.share_otps(share_id);
+
+alter table public.share_otps enable row level security;
+-- No policies: only reachable through the security-definer function below.
+
+create or replace function public.verify_share_otp(p_share_id uuid, p_code text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+  v_code text;
+  v_expires_at timestamptz;
+  v_consumed_at timestamptz;
+  v_attempts integer;
+begin
+  -- Only the most recently requested code for this share is valid - an
+  -- earlier one is implicitly superseded once a fresh code is sent.
+  select id, code, expires_at, consumed_at, attempts
+  into v_id, v_code, v_expires_at, v_consumed_at, v_attempts
+  from public.share_otps
+  where share_id = p_share_id
+  order by created_at desc
+  limit 1
+  for update;
+
+  if v_id is null or v_consumed_at is not null or v_expires_at <= now() or v_attempts >= 5 then
+    return false;
+  end if;
+
+  if v_code <> p_code then
+    update public.share_otps set attempts = attempts + 1 where id = v_id;
+    return false;
+  end if;
+
+  update public.share_otps set consumed_at = now() where id = v_id;
+  return true;
+end;
+$$;
+
+grant execute on function public.verify_share_otp(uuid, text) to service_role;

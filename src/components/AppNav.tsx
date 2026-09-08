@@ -23,6 +23,9 @@ export function AppNav() {
         <Link href="/dashboard" className="text-zinc-600 hover:text-zinc-900">
           Dashboard
         </Link>
+        <Link href="/account" className="text-zinc-600 hover:text-zinc-900">
+          Account
+        </Link>
         <Link
           href="/upload"
           className="rounded-lg bg-zinc-900 px-3 py-1.5 font-medium text-white hover:bg-zinc-700"

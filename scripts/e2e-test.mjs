@@ -235,7 +235,88 @@ check(
   shareCronRow.status === "expired" && !(await objectExistsInR2(shareCronRow.storage_key))
 );
 
-// --- 5. Rate limiting: the view route is capped at 20 requests/min/IP ------
+// --- 5. Email-locked share: OTP proves inbox control, not just a string match --
+console.log("\n== Email-locked share (OTP flow) ==");
+const uploadLocked = await uploadShare(png, "qa-otp-test.png", "image/png", {
+  linkMode: "email",
+  recipientEmail: TEST_EMAIL,
+  expiresInHours: "1",
+});
+check("upload email-locked share returns 201", uploadLocked.status === 201);
+const { share: shareLocked } = await uploadLocked.json();
+createdShareIds.push(shareLocked.id);
+
+const wrongEmailReq = await fetch(`${APP_URL}/api/view/${shareLocked.token}/request-otp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "someone-else@example.com" }),
+});
+check("requesting a code with the wrong email is rejected (403)", wrongEmailReq.status === 403);
+
+const rightEmailReq = await fetch(`${APP_URL}/api/view/${shareLocked.token}/request-otp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: TEST_EMAIL }),
+});
+check("requesting a code with the matching email succeeds", rightEmailReq.status === 200);
+
+// Codes are stored in plaintext (short-lived, single-use, rate-limited - see
+// schema.sql), so the test can read it directly rather than needing to
+// intercept the real email Resend sent.
+const [otpRow] = await restQuery(
+  "share_otps",
+  `share_id=eq.${shareLocked.id}&order=created_at.desc&limit=1&select=code`
+);
+check("a plaintext code was stored for this share", !!otpRow?.code, JSON.stringify(otpRow));
+const realCode = otpRow.code;
+const wrongCode = realCode === "000000" ? "111111" : "000000";
+
+const wrongCodeView = await fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ code: wrongCode }),
+});
+check("viewing with the wrong code is rejected (403)", wrongCodeView.status === 403);
+
+const rightCodeView = await fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ code: realCode }),
+});
+check("viewing with the correct code succeeds (200)", rightCodeView.status === 200);
+
+const [lockedViewRow] = await restQuery("share_views", `share_id=eq.${shareLocked.id}&select=viewer_identity`);
+check(
+  "the recorded viewer identity is the share's own recipient_email, not client input",
+  lockedViewRow?.viewer_identity === TEST_EMAIL,
+  JSON.stringify(lockedViewRow)
+);
+
+const reuseCodeView = await fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ code: realCode }),
+});
+check("the same code can't be reused (single-use)", reuseCodeView.status === 403);
+
+// Per-share limit (3 per 10 min) protects the recipient's inbox from being
+// spammed regardless of which IP the requests come from.
+const otpRequestStatuses = [];
+for (let i = 0; i < 3; i++) {
+  const res = await fetch(`${APP_URL}/api/view/${shareLocked.token}/request-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: TEST_EMAIL }),
+  });
+  otpRequestStatuses.push(res.status);
+}
+check(
+  "repeated code requests for the same share eventually get rate-limited (429)",
+  otpRequestStatuses.includes(429),
+  `statuses: ${otpRequestStatuses.join(",")}`
+);
+
+// --- 6. Rate limiting: the view route is capped at 20 requests/min/IP ------
 console.log("\n== Rate limiting ==");
 const uploadRateLimit = await uploadShare(png, "qa-rate-limit-test.png", "image/png", {
   linkMode: "anyone",

@@ -26,6 +26,8 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
   const { token } = use(params);
   const [meta, setMeta] = useState<ViewMeta | null>(null);
   const [identity, setIdentity] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,6 +60,26 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     if (res.ok) setComments((await res.json()).comments);
   }
 
+  async function handleRequestCode(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    const res = await fetch(`/api/view/${token}/request-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: identity.trim() }),
+    });
+
+    setLoading(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Could not send a code");
+      return;
+    }
+    setCodeSent(true);
+  }
+
   async function handleOpen(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -66,7 +88,10 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     const res = await fetch(`/api/view/${token}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ viewerIdentity: identity.trim() || "Anonymous" }),
+      body:
+        meta?.linkMode === "email"
+          ? JSON.stringify({ code: code.trim() })
+          : JSON.stringify({ viewerIdentity: identity.trim() || "Anonymous" }),
     });
 
     if (!res.ok) {
@@ -126,10 +151,12 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
   }
 
   if (!fileUrl) {
+    const isEmailStep2 = meta.linkMode === "email" && codeSent;
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4">
         <form
-          onSubmit={handleOpen}
+          onSubmit={isEmailStep2 ? handleOpen : meta.linkMode === "email" ? handleRequestCode : handleOpen}
           className="w-full max-w-sm rounded-2xl border border-zinc-800 bg-zinc-900 p-8"
         >
           <h1 className="text-lg font-semibold text-white">{meta.filename}</h1>
@@ -138,32 +165,74 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
           </p>
           {meta.linkMode === "email" ? (
             <p className="mt-2 text-sm text-amber-400">
-              This link only opens for the email address it was sent to.
+              This link only opens for the email address it was sent to - we&apos;ll email you a
+              code to confirm.
             </p>
           ) : (
             <p className="mt-2 text-sm text-zinc-500">
               This isn&apos;t verified - enter whatever identifies you to the sender.
             </p>
           )}
-          <label className="mt-6 block text-sm font-medium text-zinc-300">
-            {meta.linkMode === "email" ? "Your email" : "Your name or email"}
-          </label>
-          <input
-            autoFocus
-            required
-            type={meta.linkMode === "email" ? "email" : "text"}
-            value={identity}
-            onChange={(e) => setIdentity(e.target.value)}
-            placeholder="jane@example.com"
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-zinc-400"
-          />
+
+          {isEmailStep2 ? (
+            <>
+              <label className="mt-6 block text-sm font-medium text-zinc-300">
+                Code sent to {identity}
+              </label>
+              <input
+                autoFocus
+                required
+                inputMode="numeric"
+                maxLength={6}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="000000"
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-center text-lg tracking-[0.5em] text-white outline-none focus:border-zinc-400"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setCodeSent(false);
+                  setCode("");
+                  setError(null);
+                }}
+                className="mt-2 text-xs text-zinc-500 underline hover:text-zinc-300"
+              >
+                Use a different email
+              </button>
+            </>
+          ) : (
+            <>
+              <label className="mt-6 block text-sm font-medium text-zinc-300">
+                {meta.linkMode === "email" ? "Your email" : "Your name or email"}
+              </label>
+              <input
+                autoFocus
+                required
+                type={meta.linkMode === "email" ? "email" : "text"}
+                value={identity}
+                onChange={(e) => setIdentity(e.target.value)}
+                placeholder="jane@example.com"
+                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-zinc-400"
+              />
+            </>
+          )}
+
           {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
           <button
             type="submit"
             disabled={loading}
             className="mt-4 w-full rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-50"
           >
-            {loading ? "Opening..." : "View file"}
+            {loading
+              ? isEmailStep2
+                ? "Verifying..."
+                : "Sending..."
+              : isEmailStep2
+                ? "View file"
+                : meta.linkMode === "email"
+                  ? "Send code"
+                  : "View file"}
           </button>
         </form>
       </div>
