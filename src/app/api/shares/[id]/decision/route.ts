@@ -21,12 +21,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: share } = await admin
     .from("shares")
-    .select("id, token")
+    .select("id, token, require_decision")
     .eq("id", id)
     .single();
 
   if (!share || share.token !== token) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!share.require_decision) {
+    return NextResponse.json({ error: "This share doesn't request a decision" }, { status: 400 });
   }
 
   const { error } = await admin.from("shares").update({ decision }).eq("id", id);

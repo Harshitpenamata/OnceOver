@@ -77,7 +77,7 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
             </div>
             <div className="flex gap-2">
               <StatusBadge label={share.status} />
-              <StatusBadge label={share.decision} />
+              {share.require_decision && <StatusBadge label={share.decision} />}
             </div>
           </div>
 

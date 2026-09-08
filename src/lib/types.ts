@@ -20,6 +20,7 @@ export interface Share {
   view_count: number;
   status: ShareStatus;
   decision: Decision;
+  require_decision: boolean;
   created_at: string;
   deleted_at: string | null;
 }

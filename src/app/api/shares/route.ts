@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
     ? Number(form.get("expiresInHours"))
     : null;
   const maxViews = form.get("maxViews") ? Number(form.get("maxViews")) : null;
+  const requireDecision = form.get("requireDecision") === "true";
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "A file is required" }, { status: 400 });
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
       recipient_email: recipientEmail,
       expires_at: expiresAt,
       max_views: maxViews,
+      require_decision: requireDecision,
     })
     .select()
     .single();

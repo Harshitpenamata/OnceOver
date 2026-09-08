@@ -8,6 +8,7 @@ interface ViewMeta {
   fileType: "image" | "pdf";
   linkMode: "anyone" | "email";
   decision: "pending" | "approved" | "rejected";
+  requireDecision: boolean;
   expired: boolean;
   viewCount: number;
   maxViews: number | null;
@@ -246,24 +247,26 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     >
       <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-3">
         <span className="text-sm font-medium text-zinc-200">{meta.filename}</span>
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleDecision("approved")}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-              decision === "approved" ? "bg-emerald-500 text-white" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-            }`}
-          >
-            Approve
-          </button>
-          <button
-            onClick={() => handleDecision("rejected")}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-              decision === "rejected" ? "bg-red-500 text-white" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-            }`}
-          >
-            Reject
-          </button>
-        </div>
+        {meta.requireDecision && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleDecision("approved")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                decision === "approved" ? "bg-emerald-500 text-white" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => handleDecision("rejected")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                decision === "rejected" ? "bg-red-500 text-white" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+              }`}
+            >
+              Reject
+            </button>
+          </div>
+        )}
       </header>
 
       <main

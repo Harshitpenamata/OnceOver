@@ -26,6 +26,7 @@ create table if not exists public.shares (
 
   status            text not null default 'active' check (status in ('active', 'expired', 'deleted')),
   decision          text not null default 'pending' check (decision in ('pending', 'approved', 'rejected')),
+  require_decision  boolean not null default false, -- opt-in: only show approve/reject to the recipient if the sender asked for it
 
   created_at        timestamptz not null default now(),
   deleted_at        timestamptz

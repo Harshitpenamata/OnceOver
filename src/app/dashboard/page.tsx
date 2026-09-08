@@ -26,6 +26,21 @@ export default async function DashboardPage() {
     viewersByShare.set(v.share_id, list);
   }
 
+  const { data: comments } = shareIds.length
+    ? await supabase
+        .from("share_comments")
+        .select("share_id, author_name, body, created_at")
+        .in("share_id", shareIds)
+        .order("created_at", { ascending: true })
+    : { data: [] };
+
+  const commentsByShare = new Map<string, { author_name: string; body: string }[]>();
+  for (const c of comments ?? []) {
+    const list = commentsByShare.get(c.share_id) ?? [];
+    list.push({ author_name: c.author_name, body: c.body });
+    commentsByShare.set(c.share_id, list);
+  }
+
   return (
     <div className="flex flex-1 flex-col bg-zinc-50">
       <AppNav />
@@ -55,6 +70,7 @@ export default async function DashboardPage() {
                   <th className="px-4 py-3 font-medium">Decision</th>
                   <th className="px-4 py-3 font-medium">Views</th>
                   <th className="px-4 py-3 font-medium">Viewed by</th>
+                  <th className="px-4 py-3 font-medium">Comments</th>
                   <th className="px-4 py-3 font-medium">Created</th>
                 </tr>
               </thead>
@@ -70,7 +86,11 @@ export default async function DashboardPage() {
                       <StatusBadge label={share.status} />
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge label={share.decision} />
+                      {share.require_decision ? (
+                        <StatusBadge label={share.decision} />
+                      ) : (
+                        <span className="text-zinc-400">Not requested</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-zinc-600">
                       {share.view_count}
@@ -82,6 +102,23 @@ export default async function DashboardPage() {
                       ) : (
                         viewersByShare.get(share.id)!.join(", ")
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-600">
+                      {(() => {
+                        const shareComments = commentsByShare.get(share.id) ?? [];
+                        if (shareComments.length === 0) {
+                          return <span className="text-zinc-400">None</span>;
+                        }
+                        const latest = shareComments[shareComments.length - 1];
+                        return (
+                          <Link href={`/dashboard/share/${share.id}`} className="hover:underline">
+                            <div>{shareComments.length}</div>
+                            <div className="max-w-[220px] truncate text-xs text-zinc-400">
+                              {latest.author_name}: {latest.body}
+                            </div>
+                          </Link>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-zinc-500">
                       {new Date(share.created_at).toLocaleString()}

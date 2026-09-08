@@ -29,6 +29,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     fileType: share.file_type,
     linkMode: share.link_mode,
     decision: share.decision,
+    requireDecision: share.require_decision,
     expired,
     viewCount: share.view_count,
     maxViews: share.max_views,

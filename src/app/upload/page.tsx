@@ -14,6 +14,7 @@ export default function UploadPage() {
   const [maxViews, setMaxViews] = useState("1");
   const [linkMode, setLinkMode] = useState<"anyone" | "email">("anyone");
   const [recipientEmail, setRecipientEmail] = useState("");
+  const [requireDecision, setRequireDecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -45,6 +46,7 @@ export default function UploadPage() {
     if (linkMode === "email") form.set("recipientEmail", recipientEmail);
     if (expiresInHours) form.set("expiresInHours", String(expiresInHours));
     if (useViewLimit) form.set("maxViews", maxViews);
+    form.set("requireDecision", String(requireDecision));
 
     setLoading(true);
     const res = await fetch("/api/shares", { method: "POST", body: form });
@@ -222,6 +224,22 @@ export default function UploadPage() {
                 className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900"
               />
             )}
+          </div>
+
+          <div>
+            <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+              <input
+                type="checkbox"
+                checked={requireDecision}
+                onChange={(e) => setRequireDecision(e.target.checked)}
+                className="rounded border-zinc-300"
+              />
+              Ask the recipient to approve or reject
+            </label>
+            <p className="mt-1 text-xs text-zinc-500">
+              Off by default. When on, the viewer sees Approve/Reject buttons and you&apos;ll see
+              their decision on the dashboard.
+            </p>
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}

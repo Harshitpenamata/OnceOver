@@ -316,7 +316,51 @@ check(
   `statuses: ${otpRequestStatuses.join(",")}`
 );
 
-// --- 6. Rate limiting: the view route is capped at 20 requests/min/IP ------
+// --- 6. Approve/reject is opt-in, off by default ----------------------------
+console.log("\n== Approve/reject decision (opt-in) ==");
+const uploadNoDecision = await uploadShare(png, "qa-no-decision-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+});
+check("upload without requireDecision returns 201", uploadNoDecision.status === 201);
+const { share: shareNoDecision } = await uploadNoDecision.json();
+createdShareIds.push(shareNoDecision.id);
+check(
+  "requireDecision defaults to false in the metadata the viewer page reads",
+  (await (await fetch(`${APP_URL}/api/view/${shareNoDecision.token}`)).json()).requireDecision === false
+);
+const rejectedDecision = await fetch(`${APP_URL}/api/shares/${shareNoDecision.id}/decision`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ token: shareNoDecision.token, decision: "approved" }),
+});
+check(
+  "submitting a decision on an opted-out share is rejected (400)",
+  rejectedDecision.status === 400
+);
+
+const uploadWithDecision = await uploadShare(png, "qa-with-decision-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+  requireDecision: "true",
+});
+check("upload with requireDecision=true returns 201", uploadWithDecision.status === 201);
+const { share: shareWithDecision } = await uploadWithDecision.json();
+createdShareIds.push(shareWithDecision.id);
+check(
+  "requireDecision is true in the metadata when the sender opted in",
+  (await (await fetch(`${APP_URL}/api/view/${shareWithDecision.token}`)).json()).requireDecision === true
+);
+const acceptedDecision = await fetch(`${APP_URL}/api/shares/${shareWithDecision.id}/decision`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ token: shareWithDecision.token, decision: "approved" }),
+});
+check("submitting a decision on an opted-in share succeeds (200)", acceptedDecision.status === 200);
+const [decisionRow] = await restQuery("shares", `id=eq.${shareWithDecision.id}&select=decision`);
+check("the decision persisted as approved", decisionRow?.decision === "approved");
+
+// --- 7. Rate limiting: the view route is capped at 20 requests/min/IP ------
 console.log("\n== Rate limiting ==");
 const uploadRateLimit = await uploadShare(png, "qa-rate-limit-test.png", "image/png", {
   linkMode: "anyone",
