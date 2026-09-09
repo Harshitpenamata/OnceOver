@@ -34,7 +34,13 @@ function LoginForm() {
       setError(error.message);
       return;
     }
-    router.push(searchParams.get("next") ?? "/dashboard");
+    const requestedNext = searchParams.get("next") ?? "/dashboard";
+    // Only allow same-app paths - see the same guard in auth/callback/route.ts.
+    const next =
+      requestedNext.startsWith("/") && !requestedNext.startsWith("//") && !requestedNext.startsWith("/\\")
+        ? requestedNext
+        : "/dashboard";
+    router.push(next);
     router.refresh();
   }
 

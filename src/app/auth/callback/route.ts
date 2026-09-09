@@ -5,7 +5,14 @@ import { createClient } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  const requestedNext = searchParams.get("next") ?? "/dashboard";
+  // Only allow same-app paths - a leading "//" or "/\" is browser-parsed as a
+  // protocol-relative URL, so an unvalidated `next` here is an open redirect
+  // (e.g. next=".evil.com" turns `${origin}${next}` into a valid, different host).
+  const next =
+    requestedNext.startsWith("/") && !requestedNext.startsWith("//") && !requestedNext.startsWith("/\\")
+      ? requestedNext
+      : "/dashboard";
 
   if (code) {
     const supabase = await createClient();
