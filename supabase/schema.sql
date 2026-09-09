@@ -45,6 +45,7 @@ create table if not exists public.share_views (
   viewer_identity  text not null,            -- name/email the viewer typed in, or 'Anonymous'
   viewer_ip        text,
   user_agent       text,
+  duration_seconds integer not null default 0, -- how long this view session stayed open (see heartbeat route)
   viewed_at        timestamptz not null default now()
 );
 
@@ -262,3 +263,38 @@ end;
 $$;
 
 grant execute on function public.verify_share_otp(uuid, text) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- folders: flat, private, per-user organization for the dashboard list. No
+-- nested subfolders. The FK is ON DELETE SET NULL, so deleting a folder
+-- automatically falls its files back to "Unfiled" - no application code
+-- needed to move them.
+-- ---------------------------------------------------------------------------
+create table if not exists public.folders (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists folders_user_id_idx on public.folders(user_id);
+
+alter table public.folders enable row level security;
+
+create policy "owners manage their folders"
+  on public.folders for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+alter table public.shares add column if not exists folder_id uuid references public.folders(id) on delete set null;
+
+create index if not exists shares_folder_id_idx on public.shares(folder_id);
+
+-- ---------------------------------------------------------------------------
+-- Per-view session duration. The viewer page pings a heartbeat every few
+-- seconds while the tab is visible/focused and once more via sendBeacon on
+-- close, each time overwriting this with the current cumulative elapsed
+-- time - so a killed session still keeps whatever the last successful ping
+-- recorded, instead of only ever knowing an open timestamp.
+-- ---------------------------------------------------------------------------
+alter table public.share_views add column if not exists duration_seconds integer not null default 0;

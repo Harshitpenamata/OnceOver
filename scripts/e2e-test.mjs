@@ -360,7 +360,67 @@ check("submitting a decision on an opted-in share succeeds (200)", acceptedDecis
 const [decisionRow] = await restQuery("shares", `id=eq.${shareWithDecision.id}&select=decision`);
 check("the decision persisted as approved", decisionRow?.decision === "approved");
 
-// --- 7. Rate limiting: the view route is capped at 20 requests/min/IP ------
+// --- 7. View duration tracking: heartbeat + sendBeacon-style final update --
+// Runs before the rate-limiting section below, which deliberately exhausts
+// the view-route budget with a 25-request burst - placed after that instead,
+// a single ordinary view POST here would get 429'd by an unrelated section.
+console.log("\n== View duration tracking ==");
+const uploadForDuration = await uploadShare(png, "qa-duration-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+});
+check("upload share for duration test returns 201", uploadForDuration.status === 201);
+const { share: shareForDuration } = await uploadForDuration.json();
+createdShareIds.push(shareForDuration.id);
+
+const durationViewRes = await fetch(`${APP_URL}/api/view/${shareForDuration.token}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ viewerIdentity: "QA Duration Tester" }),
+});
+check("opening the file returns 200 with a session id header", durationViewRes.status === 200);
+const sessionId = durationViewRes.headers.get("x-view-session-id");
+check("a view session id was returned", !!sessionId);
+
+const heartbeat1 = await fetch(`${APP_URL}/api/view/${shareForDuration.token}/heartbeat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ sessionId, elapsedSeconds: 7 }),
+});
+check("first heartbeat returns 200", heartbeat1.status === 200);
+const [afterFirstBeat] = await restQuery("share_views", `id=eq.${sessionId}&select=duration_seconds`);
+check("duration_seconds updated after the first heartbeat", afterFirstBeat?.duration_seconds === 7, JSON.stringify(afterFirstBeat));
+
+// Simulates the sendBeacon call fired on tab close/navigation away with the
+// final cumulative elapsed time.
+const finalBeat = await fetch(`${APP_URL}/api/view/${shareForDuration.token}/heartbeat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ sessionId, elapsedSeconds: 134 }),
+});
+check("final beacon-style update returns 200", finalBeat.status === 200);
+const [afterFinalBeat] = await restQuery("share_views", `id=eq.${sessionId}&select=duration_seconds`);
+check(
+  "duration_seconds reflects the final elapsed time - a killed session keeps partial data too",
+  afterFinalBeat?.duration_seconds === 134,
+  JSON.stringify(afterFinalBeat)
+);
+
+const badPayloadRes = await fetch(`${APP_URL}/api/view/${shareForDuration.token}/heartbeat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ sessionId }), // missing elapsedSeconds
+});
+check("a malformed heartbeat payload is rejected (400)", badPayloadRes.status === 400);
+
+const wrongTokenRes = await fetch(`${APP_URL}/api/view/nonexistent-token-for-heartbeat/heartbeat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ sessionId, elapsedSeconds: 5 }),
+});
+check("a heartbeat for a nonexistent share token is rejected (404)", wrongTokenRes.status === 404);
+
+// --- 8. Rate limiting: the view route is capped at 20 requests/min/IP ------
 console.log("\n== Rate limiting ==");
 const uploadRateLimit = await uploadShare(png, "qa-rate-limit-test.png", "image/png", {
   linkMode: "anyone",
@@ -403,10 +463,66 @@ check(
   `statuses: ${rateLimitStatuses.join(",")}`
 );
 
+// --- 9. Folders: create/rename/move/delete, files fall back to Unfiled -----
+console.log("\n== Folders ==");
+const createFolderRes = await fetch(`${APP_URL}/api/folders`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ name: "QA Test Folder" }),
+});
+check("create folder returns 201", createFolderRes.status === 201, await createFolderRes.clone().text());
+const { folder } = await createFolderRes.json();
+const createdFolderIds = [folder.id];
+
+const listFoldersRes = await fetch(`${APP_URL}/api/folders`, { headers: { Cookie: cookieHeader } });
+const { folders: listedFolders } = await listFoldersRes.json();
+check("GET /api/folders includes the new folder", listedFolders?.some((f) => f.id === folder.id));
+
+const uploadForFolder = await uploadShare(png, "qa-folder-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+});
+check("upload share for folder test returns 201", uploadForFolder.status === 201);
+const { share: shareForFolder } = await uploadForFolder.json();
+createdShareIds.push(shareForFolder.id);
+
+const moveRes = await fetch(`${APP_URL}/api/shares/${shareForFolder.id}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ folder_id: folder.id }),
+});
+check("moving a share into a folder returns 200", moveRes.status === 200);
+const [movedRow] = await restQuery("shares", `id=eq.${shareForFolder.id}&select=folder_id`);
+check("the share's folder_id was updated", movedRow?.folder_id === folder.id, JSON.stringify(movedRow));
+
+const renameRes = await fetch(`${APP_URL}/api/folders/${folder.id}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ name: "QA Renamed Folder" }),
+});
+check("renaming a folder returns 200", renameRes.status === 200);
+const [renamedRow] = await restQuery("folders", `id=eq.${folder.id}&select=name`);
+check("the folder name persisted", renamedRow?.name === "QA Renamed Folder");
+
+const deleteFolderRes = await fetch(`${APP_URL}/api/folders/${folder.id}`, {
+  method: "DELETE",
+  headers: { Cookie: cookieHeader },
+});
+check("deleting a folder returns 200", deleteFolderRes.status === 200);
+const [afterDeleteRow] = await restQuery("shares", `id=eq.${shareForFolder.id}&select=folder_id`);
+check(
+  "the file's folder_id falls back to null (Unfiled), the file itself is not deleted",
+  afterDeleteRow?.folder_id === null,
+  JSON.stringify(afterDeleteRow)
+);
+
 // --- Cleanup ------------------------------------------------------------
 console.log("\n== Cleanup ==");
 for (const id of createdShareIds) {
   await fetch(`${SUPABASE_URL}/rest/v1/shares?id=eq.${id}`, { method: "DELETE", headers: adminHeaders });
+}
+for (const id of createdFolderIds) {
+  await fetch(`${SUPABASE_URL}/rest/v1/folders?id=eq.${id}`, { method: "DELETE", headers: adminHeaders });
 }
 console.log(`  Deleted ${createdShareIds.length} test share row(s) (cascades to views/comments).`);
 console.log(`  Test account kept: ${TEST_EMAIL} / ${TEST_PASSWORD} (log in at ${APP_URL}/login)`);

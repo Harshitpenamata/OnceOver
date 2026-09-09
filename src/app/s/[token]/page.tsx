@@ -37,6 +37,9 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
   const [commentBody, setCommentBody] = useState("");
   const [commentName, setCommentName] = useState("");
   const objectUrlRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const accumulatedSecondsRef = useRef(0);
+  const visibleSinceRef = useRef<number | null>(null);
 
   useEffect(() => {
     fetch(`/api/view/${token}`)
@@ -53,6 +56,62 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     if (!fileUrl) return;
     loadComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileUrl]);
+
+  // Tracks how long this specific view session stays open. Only counts time
+  // while the tab is visible - Page Visibility API pauses accumulation when
+  // it's hidden/backgrounded, rather than trusting a single unload event
+  // that mobile browsers routinely skip.
+  useEffect(() => {
+    if (!fileUrl || !sessionIdRef.current) return;
+    const sessionId = sessionIdRef.current;
+
+    visibleSinceRef.current = document.visibilityState === "visible" ? Date.now() : null;
+
+    function currentElapsedSeconds() {
+      const visibleMs = visibleSinceRef.current ? Date.now() - visibleSinceRef.current : 0;
+      return accumulatedSecondsRef.current + visibleMs / 1000;
+    }
+
+    function sendHeartbeat() {
+      fetch(`/api/view/${token}/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, elapsedSeconds: currentElapsedSeconds() }),
+      }).catch(() => {});
+    }
+
+    // sendBeacon (not a normal fetch) so this reliably fires during unload -
+    // a fetch started here can be cancelled by the browser before it sends.
+    function sendFinal() {
+      const blob = new Blob([JSON.stringify({ sessionId, elapsedSeconds: currentElapsedSeconds() })], {
+        type: "application/json",
+      });
+      navigator.sendBeacon(`/api/view/${token}/heartbeat`, blob);
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        if (visibleSinceRef.current) {
+          accumulatedSecondsRef.current += (Date.now() - visibleSinceRef.current) / 1000;
+          visibleSinceRef.current = null;
+        }
+      } else {
+        visibleSinceRef.current = Date.now();
+      }
+    }
+
+    const interval = setInterval(sendHeartbeat, 7000);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", sendFinal);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", sendFinal);
+      sendFinal();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileUrl]);
 
@@ -102,6 +161,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
       return;
     }
 
+    sessionIdRef.current = res.headers.get("X-View-Session-Id");
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     objectUrlRef.current = url;

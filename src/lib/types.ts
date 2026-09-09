@@ -21,6 +21,7 @@ export interface Share {
   status: ShareStatus;
   decision: Decision;
   require_decision: boolean;
+  folder_id: string | null;
   created_at: string;
   deleted_at: string | null;
 }
@@ -31,7 +32,15 @@ export interface ShareView {
   viewer_identity: string;
   viewer_ip: string | null;
   user_agent: string | null;
+  duration_seconds: number;
   viewed_at: string;
+}
+
+export interface Folder {
+  id: string;
+  user_id: string;
+  name: string;
+  created_at: string;
 }
 
 export interface ShareComment {

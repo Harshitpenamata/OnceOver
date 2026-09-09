@@ -88,13 +88,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const viewedAt = new Date();
 
-  await admin.from("share_views").insert({
-    share_id: share.id,
-    viewer_identity: identity,
-    viewer_ip: clientIp === "unknown" ? null : clientIp,
-    user_agent: request.headers.get("user-agent"),
-    viewed_at: viewedAt.toISOString(),
-  });
+  const { data: viewRow } = await admin
+    .from("share_views")
+    .insert({
+      share_id: share.id,
+      viewer_identity: identity,
+      viewer_ip: clientIp === "unknown" ? null : clientIp,
+      user_agent: request.headers.get("user-agent"),
+      viewed_at: viewedAt.toISOString(),
+    })
+    .select("id")
+    .single();
 
   const original = await getOriginal(share.storage_key);
   const label = buildWatermarkLabel(identity, viewedAt);
@@ -127,6 +131,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       "Content-Type": share.file_type === "image" ? "image/jpeg" : "application/pdf",
       "Content-Disposition": "inline",
       "Cache-Control": "no-store, no-cache, must-revalidate",
+      // Lets the viewer page report how long this specific view session
+      // stayed open via the heartbeat route below.
+      ...(viewRow ? { "X-View-Session-Id": viewRow.id } : {}),
     },
   });
 }

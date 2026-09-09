@@ -5,6 +5,13 @@ import { AppNav } from "@/components/AppNav";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { Share, ShareComment, ShareView } from "@/lib/types";
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
 export default function ShareDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [share, setShare] = useState<Share | null>(null);
@@ -127,7 +134,12 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
             <ul className="mt-3 divide-y divide-zinc-100">
               {views.map((v) => (
                 <li key={v.id} className="flex items-center justify-between py-2 text-sm">
-                  <span className="font-medium text-zinc-800">{v.viewer_identity}</span>
+                  <span className="font-medium text-zinc-800">
+                    {v.viewer_identity}
+                    <span className="ml-2 font-normal text-zinc-400">
+                      viewed for {formatDuration(v.duration_seconds)}
+                    </span>
+                  </span>
                   <span className="text-zinc-500">{new Date(v.viewed_at).toLocaleString()}</span>
                 </li>
               ))}

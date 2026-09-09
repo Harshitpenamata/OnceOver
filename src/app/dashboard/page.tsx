@@ -2,13 +2,29 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { AppNav } from "@/components/AppNav";
 import { StatusBadge } from "@/components/StatusBadge";
+import { FolderNav } from "@/components/FolderNav";
+import { FolderSelect } from "@/components/FolderSelect";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ folder?: string }>;
+}) {
+  const { folder: activeFolder } = await searchParams;
   const supabase = await createClient();
-  const { data: shares } = await supabase
-    .from("shares")
+
+  const { data: folders } = await supabase
+    .from("folders")
     .select("*")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: true });
+
+  let sharesQuery = supabase.from("shares").select("*").order("created_at", { ascending: false });
+  if (activeFolder === "unfiled") {
+    sharesQuery = sharesQuery.is("folder_id", null);
+  } else if (activeFolder) {
+    sharesQuery = sharesQuery.eq("folder_id", activeFolder);
+  }
+  const { data: shares } = await sharesQuery;
 
   const shareIds = shares?.map((s) => s.id) ?? [];
   const { data: views } = shareIds.length
@@ -44,15 +60,19 @@ export default async function DashboardPage() {
   return (
     <div className="flex flex-1 flex-col bg-zinc-50">
       <AppNav />
-      <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
         <h1 className="text-2xl font-semibold text-zinc-900">Your shares</h1>
         <p className="mt-1 text-sm text-zinc-500">
           Every file you&apos;ve sent, its expiry status, and who&apos;s opened it.
         </p>
 
+        <FolderNav folders={folders ?? []} activeFolder={activeFolder} />
+
         {!shares?.length ? (
           <div className="mt-10 rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center">
-            <p className="text-zinc-500">You haven&apos;t shared anything yet.</p>
+            <p className="text-zinc-500">
+              {activeFolder ? "No files in this folder." : "You haven't shared anything yet."}
+            </p>
             <Link
               href="/upload"
               className="mt-4 inline-block rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
@@ -71,6 +91,7 @@ export default async function DashboardPage() {
                   <th className="px-4 py-3 font-medium">Views</th>
                   <th className="px-4 py-3 font-medium">Viewed by</th>
                   <th className="px-4 py-3 font-medium">Comments</th>
+                  <th className="px-4 py-3 font-medium">Folder</th>
                   <th className="px-4 py-3 font-medium">Created</th>
                 </tr>
               </thead>
@@ -119,6 +140,9 @@ export default async function DashboardPage() {
                           </Link>
                         );
                       })()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <FolderSelect shareId={share.id} currentFolderId={share.folder_id} folders={folders ?? []} />
                     </td>
                     <td className="px-4 py-3 text-zinc-500">
                       {new Date(share.created_at).toLocaleString()}
