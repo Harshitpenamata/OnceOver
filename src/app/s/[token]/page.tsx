@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useRef, useState } from "react";
+import { PdfViewer } from "@/components/PdfViewer";
 
 interface ViewMeta {
   id: string;
@@ -337,7 +338,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
         {meta.fileType === "image" ? (
           <img src={fileUrl} alt="Shared file" draggable={false} className="max-h-[80vh] max-w-full rounded-lg shadow-2xl" />
         ) : (
-          <iframe src={`${fileUrl}#toolbar=0`} className="h-[80vh] w-full max-w-3xl rounded-lg bg-white" />
+          <PdfViewer fileUrl={fileUrl} />
         )}
       </main>
 

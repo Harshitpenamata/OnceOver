@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Minified third-party build artifact copied into public/ as a static
+    // asset (see src/components/PdfViewer.tsx) - not source to lint.
+    "public/pdf.worker.min.mjs",
   ]),
 ]);
 
