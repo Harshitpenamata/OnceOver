@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { Share, ShareComment, ShareView } from "@/lib/types";
@@ -14,12 +15,26 @@ function formatDuration(seconds: number): string {
 
 export default function ShareDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [share, setShare] = useState<Share | null>(null);
   const [views, setViews] = useState<ShareView[]>([]);
   const [comments, setComments] = useState<ShareComment[]>([]);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/s/` : "";
+
+  async function handleDelete() {
+    if (!share || !confirm(`Delete "${share.original_filename}"? This permanently removes the file.`)) return;
+    setDeleting(true);
+    const res = await fetch(`/api/shares/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      router.push("/dashboard");
+      router.refresh();
+    } else {
+      setDeleting(false);
+    }
+  }
 
   // Deliberately returns data rather than calling setState itself: an effect
   // is only allowed to call setState from its own body/callback, not from a
@@ -82,9 +97,16 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
                 Created {new Date(share.created_at).toLocaleString()}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               <StatusBadge label={share.status} />
               {share.require_decision && <StatusBadge label={share.decision} />}
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="rounded-lg border border-red-200 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
             </div>
           </div>
 

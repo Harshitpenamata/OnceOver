@@ -33,7 +33,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   return NextResponse.json({ share, views: views ?? [], comments: comments ?? [] });
 }
 
-// Moves a file into a folder (or back to "Unfiled" if folder_id is null).
+// Moves a file into a folder (folder_id) and/or renames it
+// (original_filename). Either field is optional; only the fields present in
+// the body are updated.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
@@ -42,14 +44,32 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { folder_id: folderId } = await request.json();
-  if (folderId !== null && typeof folderId !== "string") {
-    return NextResponse.json({ error: "folder_id must be a string or null" }, { status: 400 });
+  const body = await request.json();
+  const updates: { folder_id?: string | null; original_filename?: string } = {};
+
+  if ("folder_id" in body) {
+    const folderId = body.folder_id;
+    if (folderId !== null && typeof folderId !== "string") {
+      return NextResponse.json({ error: "folder_id must be a string or null" }, { status: 400 });
+    }
+    updates.folder_id = folderId;
+  }
+
+  if ("original_filename" in body) {
+    const name = body.original_filename;
+    if (typeof name !== "string" || !name.trim()) {
+      return NextResponse.json({ error: "original_filename must be a non-empty string" }, { status: 400 });
+    }
+    updates.original_filename = name.trim();
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
   const { data, error } = await supabase
     .from("shares")
-    .update({ folder_id: folderId })
+    .update(updates)
     .eq("id", id)
     .eq("owner_id", user.id)
     .select()

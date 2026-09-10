@@ -516,6 +516,95 @@ check(
   JSON.stringify(afterDeleteRow)
 );
 
+// --- 10. Rename and delete (single + bulk) ----------------------------------
+console.log("\n== Rename and delete ==");
+const uploadForRename = await uploadShare(png, "qa-rename-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+});
+check("upload share for rename test returns 201", uploadForRename.status === 201);
+const { share: shareForRename } = await uploadForRename.json();
+createdShareIds.push(shareForRename.id);
+
+const renameShareRes = await fetch(`${APP_URL}/api/shares/${shareForRename.id}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ original_filename: "renamed-by-qa.png" }),
+});
+check("renaming a share returns 200", renameShareRes.status === 200);
+const [renamedShareRow] = await restQuery("shares", `id=eq.${shareForRename.id}&select=original_filename`);
+check(
+  "the new filename persisted",
+  renamedShareRow?.original_filename === "renamed-by-qa.png",
+  JSON.stringify(renamedShareRow)
+);
+
+const emptyRenameRes = await fetch(`${APP_URL}/api/shares/${shareForRename.id}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ original_filename: "   " }),
+});
+check("renaming to a blank name is rejected (400)", emptyRenameRes.status === 400);
+
+const uploadForDelete = await uploadShare(png, "qa-delete-test.png", "image/png", {
+  linkMode: "anyone",
+  expiresInHours: "1",
+});
+check("upload share for single-delete test returns 201", uploadForDelete.status === 201);
+const { share: shareForDelete } = await uploadForDelete.json();
+createdShareIds.push(shareForDelete.id);
+
+const deleteRes = await fetch(`${APP_URL}/api/shares/${shareForDelete.id}`, {
+  method: "DELETE",
+  headers: { Cookie: cookieHeader },
+});
+check("deleting a share returns 200", deleteRes.status === 200);
+const [deletedRow] = await restQuery("shares", `id=eq.${shareForDelete.id}&select=status,storage_key`);
+check("the share's status became deleted", deletedRow?.status === "deleted", JSON.stringify(deletedRow));
+check(
+  "the R2 object was actually removed on delete",
+  !(await objectExistsInR2(deletedRow.storage_key))
+);
+
+// Mirrors what the dashboard's "Delete selected" bar actually does client
+// side: one DELETE call per selected id, fired concurrently.
+const uploadBulkA = await uploadShare(png, "qa-bulk-a.png", "image/png", { linkMode: "anyone", expiresInHours: "1" });
+const uploadBulkB = await uploadShare(png, "qa-bulk-b.png", "image/png", { linkMode: "anyone", expiresInHours: "1" });
+check(
+  "upload two shares for bulk-delete test returns 201",
+  uploadBulkA.status === 201 && uploadBulkB.status === 201
+);
+const { share: shareBulkA } = await uploadBulkA.json();
+const { share: shareBulkB } = await uploadBulkB.json();
+createdShareIds.push(shareBulkA.id, shareBulkB.id);
+
+const bulkDeleteStatuses = (
+  await Promise.all(
+    [shareBulkA.id, shareBulkB.id].map((id) =>
+      fetch(`${APP_URL}/api/shares/${id}`, { method: "DELETE", headers: { Cookie: cookieHeader } })
+    )
+  )
+).map((res) => res.status);
+check("bulk delete: both requests return 200", bulkDeleteStatuses.every((s) => s === 200), bulkDeleteStatuses.join(","));
+const bulkDeletedRows = await restQuery(
+  "shares",
+  `id=in.(${shareBulkA.id},${shareBulkB.id})&select=id,status`
+);
+check(
+  "bulk delete: both shares are marked deleted",
+  bulkDeletedRows.length === 2 && bulkDeletedRows.every((r) => r.status === "deleted"),
+  JSON.stringify(bulkDeletedRows)
+);
+
+// Deleted shares are excluded from the dashboard list (not from the raw
+// table, which is a soft delete) - the shares API itself isn't
+// status-filtered, so check the same query the dashboard page runs.
+const activeOnlyRows = await restQuery(
+  "shares",
+  `id=in.(${shareForDelete.id},${shareBulkA.id})&status=neq.deleted&select=id`
+);
+check("deleted shares don't show up under a status<>deleted filter", activeOnlyRows.length === 0);
+
 // --- Cleanup ------------------------------------------------------------
 console.log("\n== Cleanup ==");
 for (const id of createdShareIds) {
