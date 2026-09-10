@@ -150,7 +150,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
       headers: { "Content-Type": "application/json" },
       body:
         meta?.linkMode === "email"
-          ? JSON.stringify({ code: code.trim() })
+          ? JSON.stringify({ email: identity.trim(), code: code.trim() })
           : JSON.stringify({ viewerIdentity: identity.trim() || "Anonymous" }),
     });
 
@@ -226,8 +226,8 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
           </p>
           {meta.linkMode === "email" ? (
             <p className="mt-2 text-sm text-amber-400">
-              This link only opens for the email address it was sent to - we&apos;ll email you a
-              code to confirm.
+              This link only opens for the email addresses it was sent to - we&apos;ll email you
+              a code to confirm.
             </p>
           ) : (
             <p className="mt-2 text-sm text-zinc-500">

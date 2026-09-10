@@ -40,7 +40,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 // Records the view, burns the watermark in, and streams the file back.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const { viewerIdentity, code } = await request.json();
+  const { viewerIdentity, email, code } = await request.json();
   const admin = createAdminClient();
   const clientIp = getClientIp(request);
 
@@ -54,16 +54,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   let identity: string;
   if (share.link_mode === "email") {
     // The emailed one-time code is the actual proof of identity here - once
-    // it's verified, the watermark uses the share's own recipient_email
-    // rather than trusting whatever the client sent as viewerIdentity.
-    const { data: codeValid, error: otpError } =
-      typeof code === "string"
-        ? await admin.rpc("verify_share_otp", { p_share_id: share.id, p_code: code })
-        : { data: false, error: null };
-    if (otpError || !codeValid) {
+    // it's verified, the watermark uses the matched recipient's own email
+    // (looked up per (share, email) pair - see verify_share_otp) rather than
+    // trusting whatever the client sent as viewerIdentity.
+    const { data: result, error: otpError } =
+      typeof code === "string" && typeof email === "string"
+        ? await admin
+            .rpc("verify_share_otp", { p_share_id: share.id, p_email: email, p_code: code })
+            .single<{ valid: boolean; matched_email: string | null }>()
+        : { data: null, error: null };
+    if (otpError || !result?.valid || !result.matched_email) {
       return NextResponse.json({ error: "Invalid or expired code" }, { status: 403 });
     }
-    identity = share.recipient_email!;
+    identity = result.matched_email;
   } else {
     identity = (viewerIdentity as string | undefined)?.trim() || "Anonymous";
   }

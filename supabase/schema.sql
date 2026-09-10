@@ -18,7 +18,7 @@ create table if not exists public.shares (
   file_size_bytes   bigint not null default 0,
 
   link_mode         text not null default 'anyone' check (link_mode in ('anyone', 'email')),
-  recipient_email   text,
+  recipient_email   text, -- deprecated: superseded by share_recipients (multiple recipients per share), left in place rather than dropped
 
   expires_at        timestamptz,             -- null = no time limit
   max_views         integer,                 -- null = no view-count limit
@@ -211,13 +211,14 @@ grant execute on function public.check_rate_limit(text, integer, integer) to ano
 -- request-rate-limiting per share and a per-code attempt cap below.
 -- ---------------------------------------------------------------------------
 create table if not exists public.share_otps (
-  id          uuid primary key default gen_random_uuid(),
-  share_id    uuid not null references public.shares(id) on delete cascade,
-  code        text not null,
-  attempts    integer not null default 0,
-  expires_at  timestamptz not null,
-  consumed_at timestamptz,
-  created_at  timestamptz not null default now()
+  id              uuid primary key default gen_random_uuid(),
+  share_id        uuid not null references public.shares(id) on delete cascade,
+  recipient_email text not null, -- which recipient this code was issued to (a share can have several)
+  code            text not null,
+  attempts        integer not null default 0,
+  expires_at      timestamptz not null,
+  consumed_at     timestamptz,
+  created_at      timestamptz not null default now()
 );
 
 create index if not exists share_otps_share_id_idx on public.share_otps(share_id);
@@ -225,8 +226,15 @@ create index if not exists share_otps_share_id_idx on public.share_otps(share_id
 alter table public.share_otps enable row level security;
 -- No policies: only reachable through the security-definer function below.
 
-create or replace function public.verify_share_otp(p_share_id uuid, p_code text)
-returns boolean
+-- Existing installs: add the new column before the function below is
+-- created, since its body references it.
+alter table public.share_otps add column if not exists recipient_email text;
+
+-- Scoped per (share, recipient) rather than "most recent code for the
+-- share": with multiple recipients, one person requesting a code must not
+-- invalidate a different recipient's still-valid, unexpired one.
+create or replace function public.verify_share_otp(p_share_id uuid, p_email text, p_code text)
+returns table (valid boolean, matched_email text)
 language plpgsql
 security definer
 set search_path = public
@@ -234,35 +242,40 @@ as $$
 declare
   v_id uuid;
   v_code text;
+  v_email text;
   v_expires_at timestamptz;
   v_consumed_at timestamptz;
   v_attempts integer;
 begin
-  -- Only the most recently requested code for this share is valid - an
-  -- earlier one is implicitly superseded once a fresh code is sent.
-  select id, code, expires_at, consumed_at, attempts
-  into v_id, v_code, v_expires_at, v_consumed_at, v_attempts
+  select id, code, recipient_email, expires_at, consumed_at, attempts
+  into v_id, v_code, v_email, v_expires_at, v_consumed_at, v_attempts
   from public.share_otps
-  where share_id = p_share_id
+  where share_id = p_share_id and lower(recipient_email) = lower(p_email)
   order by created_at desc
   limit 1
   for update;
 
   if v_id is null or v_consumed_at is not null or v_expires_at <= now() or v_attempts >= 5 then
-    return false;
+    return query select false, null::text;
+    return;
   end if;
 
   if v_code <> p_code then
     update public.share_otps set attempts = attempts + 1 where id = v_id;
-    return false;
+    return query select false, null::text;
+    return;
   end if;
 
   update public.share_otps set consumed_at = now() where id = v_id;
-  return true;
+  return query select true, v_email;
 end;
 $$;
 
-grant execute on function public.verify_share_otp(uuid, text) to service_role;
+grant execute on function public.verify_share_otp(uuid, text, text) to service_role;
+
+-- Existing installs: drop the old single-arg (share, code) function now that
+-- the (share, email, code)-scoped version above has replaced it.
+drop function if exists public.verify_share_otp(uuid, text);
 
 -- ---------------------------------------------------------------------------
 -- folders: flat, private, per-user organization for the dashboard list. No
@@ -298,3 +311,33 @@ create index if not exists shares_folder_id_idx on public.shares(folder_id);
 -- recorded, instead of only ever knowing an open timestamp.
 -- ---------------------------------------------------------------------------
 alter table public.share_views add column if not exists duration_seconds integer not null default 0;
+
+-- ---------------------------------------------------------------------------
+-- share_recipients: one row per recipient email on an email-locked share,
+-- superseding the single shares.recipient_email column. Each recipient gets
+-- their own OTP lifecycle and their own watermark identity.
+-- ---------------------------------------------------------------------------
+create table if not exists public.share_recipients (
+  id         uuid primary key default gen_random_uuid(),
+  share_id   uuid not null references public.shares(id) on delete cascade,
+  email      text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists share_recipients_share_id_idx on public.share_recipients(share_id);
+create unique index if not exists share_recipients_unique_email_idx
+  on public.share_recipients(share_id, lower(email));
+
+alter table public.share_recipients enable row level security;
+
+create policy "owners manage recipients on their shares"
+  on public.share_recipients for all
+  using (exists (select 1 from public.shares s where s.id = share_id and s.owner_id = auth.uid()))
+  with check (exists (select 1 from public.shares s where s.id = share_id and s.owner_id = auth.uid()));
+
+-- Backfill: existing shares created before this table existed only have the
+-- single recipient_email column populated.
+insert into public.share_recipients (share_id, email)
+select id, recipient_email from public.shares
+where recipient_email is not null
+on conflict do nothing;

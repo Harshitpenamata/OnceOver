@@ -14,7 +14,7 @@ export interface Share {
   storage_key: string;
   file_size_bytes: number;
   link_mode: LinkMode;
-  recipient_email: string | null;
+  recipient_email: string | null; // deprecated - see ShareRecipient / the share_recipients table
   expires_at: string | null;
   max_views: number | null;
   view_count: number;
@@ -34,6 +34,13 @@ export interface ShareView {
   user_agent: string | null;
   duration_seconds: number;
   viewed_at: string;
+}
+
+export interface ShareRecipient {
+  id: string;
+  share_id: string;
+  email: string;
+  created_at: string;
 }
 
 export interface Folder {

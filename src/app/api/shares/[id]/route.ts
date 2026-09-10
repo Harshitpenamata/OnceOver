@@ -30,7 +30,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     .eq("share_id", id)
     .order("created_at", { ascending: true });
 
-  return NextResponse.json({ share, views: views ?? [], comments: comments ?? [] });
+  const { data: recipients } = await supabase
+    .from("share_recipients")
+    .select("*")
+    .eq("share_id", id)
+    .order("created_at", { ascending: true });
+
+  return NextResponse.json({
+    share,
+    views: views ?? [],
+    comments: comments ?? [],
+    recipients: recipients ?? [],
+  });
 }
 
 // Moves a file into a folder (folder_id) and/or renames it

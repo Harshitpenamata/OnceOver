@@ -4,7 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppNav } from "@/components/AppNav";
 import { StatusBadge } from "@/components/StatusBadge";
-import type { Share, ShareComment, ShareView } from "@/lib/types";
+import type { Share, ShareComment, ShareRecipient, ShareView } from "@/lib/types";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -19,6 +19,7 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
   const [share, setShare] = useState<Share | null>(null);
   const [views, setViews] = useState<ShareView[]>([]);
   const [comments, setComments] = useState<ShareComment[]>([]);
+  const [recipients, setRecipients] = useState<ShareRecipient[]>([]);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -51,6 +52,7 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
       setShare(data.share);
       setViews(data.views);
       setComments(data.comments);
+      setRecipients(data.recipients);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -142,7 +144,9 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
             <div>
               <dt className="text-zinc-500">Access</dt>
               <dd className="font-medium text-zinc-900">
-                {share.link_mode === "email" ? share.recipient_email : "Anyone with the link"}
+                {share.link_mode === "email"
+                  ? recipients.map((r) => r.email).join(", ") || "No recipients"
+                  : "Anyone with the link"}
               </dd>
             </div>
           </dl>

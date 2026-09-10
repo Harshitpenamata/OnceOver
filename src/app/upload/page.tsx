@@ -13,7 +13,7 @@ export default function UploadPage() {
   const [useViewLimit, setUseViewLimit] = useState(false);
   const [maxViews, setMaxViews] = useState("1");
   const [linkMode, setLinkMode] = useState<"anyone" | "email">("anyone");
-  const [recipientEmail, setRecipientEmail] = useState("");
+  const [recipientEmailsText, setRecipientEmailsText] = useState("");
   const [requireDecision, setRequireDecision] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,8 +27,12 @@ export default function UploadPage() {
       setError("Choose a file to share");
       return;
     }
-    if (linkMode === "email" && !recipientEmail) {
-      setError("Enter the recipient's email");
+    const recipientEmails = recipientEmailsText
+      .split(/[\n,]/)
+      .map((email) => email.trim())
+      .filter(Boolean);
+    if (linkMode === "email" && recipientEmails.length === 0) {
+      setError("Enter at least one recipient email");
       return;
     }
 
@@ -43,7 +47,9 @@ export default function UploadPage() {
     const form = new FormData();
     form.set("file", file);
     form.set("linkMode", linkMode);
-    if (linkMode === "email") form.set("recipientEmail", recipientEmail);
+    if (linkMode === "email") {
+      for (const email of recipientEmails) form.append("recipientEmails", email);
+    }
     if (expiresInHours) form.set("expiresInHours", String(expiresInHours));
     if (useViewLimit) form.set("maxViews", maxViews);
     form.set("requireDecision", String(requireDecision));
@@ -212,17 +218,23 @@ export default function UploadPage() {
                     : "border-zinc-300 text-zinc-600 hover:bg-zinc-50"
                 }`}
               >
-                Specific recipient
+                Specific recipient(s)
               </button>
             </div>
             {linkMode === "email" && (
-              <input
-                type="email"
-                placeholder="recipient@example.com"
-                value={recipientEmail}
-                onChange={(e) => setRecipientEmail(e.target.value)}
-                className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900"
-              />
+              <>
+                <textarea
+                  placeholder={"recipient@example.com\nanother@example.com"}
+                  value={recipientEmailsText}
+                  onChange={(e) => setRecipientEmailsText(e.target.value)}
+                  rows={3}
+                  className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900"
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  One email per line (or comma-separated). Each recipient gets their own code and
+                  their own watermark.
+                </p>
+              </>
             )}
           </div>
 

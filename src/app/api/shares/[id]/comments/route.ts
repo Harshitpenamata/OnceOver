@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: share } = await supabase
     .from("shares")
-    .select("id, original_filename, recipient_email")
+    .select("id, original_filename")
     .eq("id", id)
     .eq("owner_id", user.id)
     .single();
@@ -46,15 +46,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  if (share.recipient_email) {
-    await sendCommentNotification({
-      to: share.recipient_email,
-      filename: share.original_filename,
-      authorName: user.email ?? "Sender",
-      body: body.trim(),
-      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
-    }).catch(() => {});
-  }
+  const { data: recipients } = await supabase.from("share_recipients").select("email").eq("share_id", id);
+  await Promise.all(
+    (recipients ?? []).map((r) =>
+      sendCommentNotification({
+        to: r.email,
+        filename: share.original_filename,
+        authorName: user.email ?? "Sender",
+        body: body.trim(),
+        dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      }).catch(() => {})
+    )
+  );
 
   return NextResponse.json({ comment }, { status: 201 });
 }

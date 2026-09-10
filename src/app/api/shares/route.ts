@@ -12,6 +12,7 @@ const ALLOWED_TYPES: Record<string, "image" | "pdf"> = {
 };
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function GET() {
   const supabase = await createClient();
@@ -44,14 +45,23 @@ export async function POST(request: NextRequest) {
   const form = await request.formData();
   const file = form.get("file");
   const linkMode = String(form.get("linkMode") ?? "anyone");
-  const recipientEmail = form.get("recipientEmail")
-    ? String(form.get("recipientEmail"))
-    : null;
   const expiresInHours = form.get("expiresInHours")
     ? Number(form.get("expiresInHours"))
     : null;
   const maxViews = form.get("maxViews") ? Number(form.get("maxViews")) : null;
   const requireDecision = form.get("requireDecision") === "true";
+
+  // Dedupe case-insensitively, preserving the first casing seen.
+  const seen = new Set<string>();
+  const recipientEmails: string[] = [];
+  for (const raw of form.getAll("recipientEmails")) {
+    const email = String(raw).trim();
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    recipientEmails.push(email);
+  }
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "A file is required" }, { status: 400 });
@@ -66,11 +76,17 @@ export async function POST(request: NextRequest) {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     return NextResponse.json({ error: "File exceeds the 25MB limit" }, { status: 400 });
   }
-  if (linkMode === "email" && !recipientEmail) {
-    return NextResponse.json(
-      { error: "recipientEmail is required when linkMode is 'email'" },
-      { status: 400 }
-    );
+  if (linkMode === "email") {
+    if (recipientEmails.length === 0) {
+      return NextResponse.json(
+        { error: "At least one recipient email is required" },
+        { status: 400 }
+      );
+    }
+    const invalid = recipientEmails.find((email) => !EMAIL_PATTERN.test(email));
+    if (invalid) {
+      return NextResponse.json({ error: `"${invalid}" isn't a valid email` }, { status: 400 });
+    }
   }
   if (!expiresInHours && !maxViews) {
     return NextResponse.json(
@@ -100,7 +116,6 @@ export async function POST(request: NextRequest) {
       storage_key: storageKey,
       file_size_bytes: file.size,
       link_mode: linkMode,
-      recipient_email: recipientEmail,
       expires_at: expiresAt,
       max_views: maxViews,
       require_decision: requireDecision,
@@ -109,5 +124,15 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  if (linkMode === "email") {
+    const { error: recipientsError } = await supabase
+      .from("share_recipients")
+      .insert(recipientEmails.map((email) => ({ share_id: data.id, email })));
+    if (recipientsError) {
+      return NextResponse.json({ error: recipientsError.message }, { status: 500 });
+    }
+  }
+
   return NextResponse.json({ share: data }, { status: 201 });
 }

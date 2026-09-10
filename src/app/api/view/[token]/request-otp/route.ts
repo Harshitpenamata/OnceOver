@@ -27,12 +27,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (isExpired(share)) {
     return NextResponse.json({ error: "This file has expired" }, { status: 410 });
   }
-  if (typeof email !== "string" || email.trim().toLowerCase() !== share.recipient_email?.toLowerCase()) {
-    return NextResponse.json({ error: "This link is restricted to a specific recipient" }, { status: 403 });
+  if (typeof email !== "string" || !email.trim()) {
+    return NextResponse.json({ error: "This link is restricted to specific recipients" }, { status: 403 });
+  }
+  const { data: recipient } = await admin
+    .from("share_recipients")
+    .select("email")
+    .eq("share_id", share.id)
+    .ilike("email", email.trim())
+    .maybeSingle();
+  if (!recipient) {
+    return NextResponse.json({ error: "This link is restricted to specific recipients" }, { status: 403 });
   }
 
   // Limit how often a code can be requested for THIS share regardless of
-  // caller IP, so an attacker can't spam the recipient's inbox from many IPs.
+  // caller IP or which recipient, so an attacker can't spam recipients'
+  // inboxes from many IPs or by cycling through email addresses.
   if (!(await checkRateLimit(admin, `otp-share:${share.id}`, 3, 10 * 60))) {
     return NextResponse.json({ error: "Too many codes requested - try again in a few minutes" }, { status: 429 });
   }
@@ -40,11 +50,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const code = generateOtpCode();
   await admin.from("share_otps").insert({
     share_id: share.id,
+    recipient_email: recipient.email,
     code,
     expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
   });
 
-  await sendOtpEmail({ to: share.recipient_email, filename: share.original_filename, code }).catch(() => {});
+  await sendOtpEmail({ to: recipient.email, filename: share.original_filename, code }).catch(() => {});
 
   return NextResponse.json({ ok: true });
 }

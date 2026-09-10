@@ -256,80 +256,103 @@ check(
   shareCronRow.status === "expired" && !(await objectExistsInR2(shareCronRow.storage_key))
 );
 
-// --- 5. Email-locked share: OTP proves inbox control, not just a string match --
-console.log("\n== Email-locked share (OTP flow) ==");
-const uploadLocked = await uploadShare(png, "qa-otp-test.png", "image/png", {
-  linkMode: "email",
-  recipientEmail: TEST_EMAIL,
-  expiresInHours: "1",
+// --- 5. Email-locked share: multiple recipients, each with their own OTP --
+console.log("\n== Email-locked share (multiple recipients, OTP flow) ==");
+const SECOND_EMAIL = "qa-second-recipient@example.com";
+const lockedForm = new FormData();
+lockedForm.append("file", new Blob([png], { type: "image/png" }), "qa-otp-test.png");
+lockedForm.set("linkMode", "email");
+lockedForm.append("recipientEmails", TEST_EMAIL);
+lockedForm.append("recipientEmails", SECOND_EMAIL);
+lockedForm.set("expiresInHours", "1");
+const uploadLocked = await fetch(`${APP_URL}/api/shares`, {
+  method: "POST",
+  headers: { Cookie: cookieHeader },
+  body: lockedForm,
 });
-check("upload email-locked share returns 201", uploadLocked.status === 201);
+check("upload multi-recipient share returns 201", uploadLocked.status === 201, await uploadLocked.clone().text());
 const { share: shareLocked } = await uploadLocked.json();
 createdShareIds.push(shareLocked.id);
+
+const recipientRows = await restQuery("share_recipients", `share_id=eq.${shareLocked.id}&select=email`);
+check(
+  "both recipient emails were stored",
+  recipientRows.length === 2 && recipientRows.some((r) => r.email === TEST_EMAIL) && recipientRows.some((r) => r.email === SECOND_EMAIL),
+  JSON.stringify(recipientRows)
+);
 
 const wrongEmailReq = await fetch(`${APP_URL}/api/view/${shareLocked.token}/request-otp`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ email: "someone-else@example.com" }),
 });
-check("requesting a code with the wrong email is rejected (403)", wrongEmailReq.status === 403);
+check("requesting a code with an unlisted email is rejected (403)", wrongEmailReq.status === 403);
 
-const rightEmailReq = await fetch(`${APP_URL}/api/view/${shareLocked.token}/request-otp`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ email: TEST_EMAIL }),
-});
-check("requesting a code with the matching email succeeds", rightEmailReq.status === 200);
-
-// Codes are stored in plaintext (short-lived, single-use, rate-limited - see
-// schema.sql), so the test can read it directly rather than needing to
-// intercept the real email Resend sent.
-const [otpRow] = await restQuery(
-  "share_otps",
-  `share_id=eq.${shareLocked.id}&order=created_at.desc&limit=1&select=code`
-);
-check("a plaintext code was stored for this share", !!otpRow?.code, JSON.stringify(otpRow));
-const realCode = otpRow.code;
-const wrongCode = realCode === "000000" ? "111111" : "000000";
-
-const wrongCodeView = await fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ code: wrongCode }),
-});
-check("viewing with the wrong code is rejected (403)", wrongCodeView.status === 403);
-
-const rightCodeView = await fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ code: realCode }),
-});
-check("viewing with the correct code succeeds (200)", rightCodeView.status === 200);
-
-const [lockedViewRow] = await restQuery("share_views", `share_id=eq.${shareLocked.id}&select=viewer_identity`);
-check(
-  "the recorded viewer identity is the share's own recipient_email, not client input",
-  lockedViewRow?.viewer_identity === TEST_EMAIL,
-  JSON.stringify(lockedViewRow)
-);
-
-const reuseCodeView = await fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ code: realCode }),
-});
-check("the same code can't be reused (single-use)", reuseCodeView.status === 403);
-
-// Per-share limit (3 per 10 min) protects the recipient's inbox from being
-// spammed regardless of which IP the requests come from.
-const otpRequestStatuses = [];
-for (let i = 0; i < 3; i++) {
+async function requestCode(email) {
   const res = await fetch(`${APP_URL}/api/view/${shareLocked.token}/request-otp`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: TEST_EMAIL }),
+    body: JSON.stringify({ email }),
   });
-  otpRequestStatuses.push(res.status);
+  return res.status;
+}
+async function latestCodeFor(email) {
+  const [row] = await restQuery(
+    "share_otps",
+    `share_id=eq.${shareLocked.id}&recipient_email=eq.${encodeURIComponent(email)}&order=created_at.desc&limit=1&select=code`
+  );
+  return row?.code;
+}
+async function viewWith(email, code) {
+  return fetch(`${APP_URL}/api/view/${shareLocked.token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code }),
+  });
+}
+
+check("requesting a code as the first recipient succeeds", (await requestCode(TEST_EMAIL)) === 200);
+const codeA = await latestCodeFor(TEST_EMAIL);
+check("a plaintext code was stored for the first recipient", !!codeA, codeA);
+
+// The core fix: a second recipient requesting their own code must not
+// invalidate the first recipient's still-valid one (the previous
+// "most recent code per share" scoping would have broken this).
+check("requesting a code as the second recipient succeeds", (await requestCode(SECOND_EMAIL)) === 200);
+const codeB = await latestCodeFor(SECOND_EMAIL);
+check("a plaintext code was stored for the second recipient", !!codeB && codeB !== codeA, codeB);
+
+const wrongCodeView = await viewWith(TEST_EMAIL, codeA === "000000" ? "111111" : "000000");
+check("viewing with the wrong code is rejected (403)", wrongCodeView.status === 403);
+
+const crossRecipientView = await viewWith(TEST_EMAIL, codeB);
+check("recipient A's email with recipient B's code is rejected (403)", crossRecipientView.status === 403);
+
+const firstRecipientView = await viewWith(TEST_EMAIL, codeA);
+check(
+  "the first recipient's code still works after the second recipient requested theirs",
+  firstRecipientView.status === 200
+);
+
+const secondRecipientView = await viewWith(SECOND_EMAIL, codeB);
+check("the second recipient's own code independently works too", secondRecipientView.status === 200);
+
+const viewRows = await restQuery("share_views", `share_id=eq.${shareLocked.id}&select=viewer_identity&order=viewed_at.asc`);
+check(
+  "each view recorded its own recipient's email as the identity, not client input",
+  viewRows.length === 2 && viewRows[0].viewer_identity === TEST_EMAIL && viewRows[1].viewer_identity === SECOND_EMAIL,
+  JSON.stringify(viewRows)
+);
+
+const reuseCodeView = await viewWith(TEST_EMAIL, codeA);
+check("the same code can't be reused (single-use)", reuseCodeView.status === 403);
+
+// Per-share limit (3 per 10 min) protects recipients' inboxes from being
+// spammed regardless of which IP the requests come from or which recipient
+// email is being cycled through.
+const otpRequestStatuses = [];
+for (let i = 0; i < 3; i++) {
+  otpRequestStatuses.push(await requestCode(i % 2 === 0 ? TEST_EMAIL : SECOND_EMAIL));
 }
 check(
   "repeated code requests for the same share eventually get rate-limited (429)",
