@@ -93,12 +93,18 @@ and the Sharp/pdf-lib watermark functions — and needs nothing but `npm install
 API routes over HTTP against your real `.env.local` credentials: signup/login, an authenticated
 upload, a genuinely concurrent race on a 1-view link (this is what originally caught a
 delete-before-read bug in the expiry logic that unit tests alone did not), the PDF watermark
-path, and the `/api/cron/cleanup` sweep. It requires `npm run dev` running in another terminal
-and creates/cleans up its own test data:
+path, and the `/api/cron/cleanup` sweep. It requires `npm run dev` running in another terminal,
+`TEST_EMAIL`/`TEST_PASSWORD` set in `.env.local` (not hardcoded in the script - this repo is
+public, so credentials only ever belong in the gitignored `.env.local`), and creates/cleans up
+its own test data:
 
 ```bash
 set -a && source .env.local && set +a && npm run test:e2e
 ```
+
+Use an email you're fine with Resend sending test notifications to. Resend's sandbox mode
+restricts delivery to the account owner's own address, but that lifts once a sending domain is
+verified (see Deploying below) - at that point any real inbox works.
 
 ## Deploying
 

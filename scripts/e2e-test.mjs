@@ -5,14 +5,19 @@
 // lifecycle, and real HTTP race timing).
 //
 // Requires: `npm run dev` running in another terminal, and the same
-// .env.local this repo already uses for Supabase/R2/Resend.
+// .env.local this repo already uses for Supabase/R2/Resend, plus
+// TEST_EMAIL/TEST_PASSWORD (see .env.example) - deliberately NOT hardcoded
+// here, since this file is committed to a public repo. Use an email you
+// don't mind Resend delivering test notifications to (Resend's sandbox mode
+// restricts delivery to the account owner's own address, but that
+// restriction lifts once a sending domain is verified - see README).
 //
 // Usage:
 //   set -a && source .env.local && set +a && node scripts/e2e-test.mjs
 //
 // Creates and cleans up its own share rows and R2 objects. Leaves behind
 // (and reuses on repeat runs) one confirmed Supabase user so you can also
-// log into the app by hand: TEST_EMAIL / TEST_PASSWORD below.
+// log into the app by hand with TEST_EMAIL / TEST_PASSWORD.
 
 import sharp from "sharp";
 import { PDFDocument } from "pdf-lib";
@@ -23,9 +28,25 @@ const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 const CRON_SECRET = process.env.CRON_SECRET;
+const TEST_EMAIL = process.env.TEST_EMAIL;
+const TEST_PASSWORD = process.env.TEST_PASSWORD;
+
+for (const [name, value] of Object.entries({
+  NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY: SERVICE_KEY,
+  NEXT_PUBLIC_APP_URL: APP_URL,
+  CRON_SECRET,
+  TEST_EMAIL,
+  TEST_PASSWORD,
+})) {
+  if (!value) {
+    console.error(`Missing required env var: ${name} (see .env.example)`);
+    process.exit(1);
+  }
+}
+
 const PROJECT_REF = new URL(SUPABASE_URL).hostname.split(".")[0];
-const TEST_EMAIL = "harshit3199@gmail.com";
-const TEST_PASSWORD = "OnceOver-QA-Test-2026!";
 
 const r2 = new S3Client({
   region: "auto",
