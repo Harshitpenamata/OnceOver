@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { uploadOriginal } from "@/lib/r2";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { isValidEmail } from "@/lib/email";
 
 const ALLOWED_TYPES: Record<string, "image" | "pdf"> = {
   "image/png": "image",
@@ -12,7 +13,6 @@ const ALLOWED_TYPES: Record<string, "image" | "pdf"> = {
 };
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function GET() {
   const supabase = await createClient();
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const invalid = recipientEmails.find((email) => !EMAIL_PATTERN.test(email));
+    const invalid = recipientEmails.find((email) => !isValidEmail(email));
     if (invalid) {
       return NextResponse.json({ error: `"${invalid}" isn't a valid email` }, { status: 400 });
     }

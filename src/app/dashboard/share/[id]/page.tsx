@@ -23,6 +23,10 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [newRecipientEmail, setNewRecipientEmail] = useState("");
+  const [addingRecipient, setAddingRecipient] = useState(false);
+  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [removingRecipientId, setRemovingRecipientId] = useState<string | null>(null);
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/s/` : "";
 
   async function handleDelete() {
@@ -34,6 +38,43 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
       router.refresh();
     } else {
       setDeleting(false);
+    }
+  }
+
+  async function handleAddRecipient(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newRecipientEmail.trim()) return;
+    setAddingRecipient(true);
+    setRecipientError(null);
+    const res = await fetch(`/api/shares/${id}/recipients`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: newRecipientEmail.trim() }),
+    });
+    setAddingRecipient(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setRecipientError(data.error ?? "Could not add recipient");
+      return;
+    }
+    setNewRecipientEmail("");
+    const data = await fetchShareData();
+    if (data) setRecipients(data.recipients);
+  }
+
+  async function handleRemoveRecipient(recipientId: string) {
+    if (
+      !confirm(
+        "Remove this person's access? Any code already sent to them stops working immediately."
+      )
+    )
+      return;
+    setRemovingRecipientId(recipientId);
+    const res = await fetch(`/api/shares/${id}/recipients/${recipientId}`, { method: "DELETE" });
+    setRemovingRecipientId(null);
+    if (res.ok) {
+      const data = await fetchShareData();
+      if (data) setRecipients(data.recipients);
     }
   }
 
@@ -151,6 +192,53 @@ export default function ShareDetailPage({ params }: { params: Promise<{ id: stri
             </div>
           </dl>
         </div>
+
+        {share.link_mode === "email" && (
+          <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-zinc-900">Recipients</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              Only these people can open this link. Removing someone revokes access immediately,
+              including any code already sent to them.
+            </p>
+
+            {recipients.length === 0 ? (
+              <p className="mt-3 text-sm text-zinc-500">No recipients yet.</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-zinc-100">
+                {recipients.map((r) => (
+                  <li key={r.id} className="flex items-center justify-between py-2 text-sm">
+                    <span className="text-zinc-800">{r.email}</span>
+                    <button
+                      onClick={() => handleRemoveRecipient(r.id)}
+                      disabled={removingRecipientId === r.id}
+                      className="text-xs text-red-600 underline hover:text-red-800 disabled:opacity-50"
+                    >
+                      {removingRecipientId === r.id ? "Removing..." : "Remove"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <form onSubmit={handleAddRecipient} className="mt-4 flex gap-2">
+              <input
+                type="email"
+                value={newRecipientEmail}
+                onChange={(e) => setNewRecipientEmail(e.target.value)}
+                placeholder="Add recipient email"
+                className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900"
+              />
+              <button
+                type="submit"
+                disabled={addingRecipient}
+                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+              >
+                {addingRecipient ? "Adding..." : "Add"}
+              </button>
+            </form>
+            {recipientError && <p className="mt-2 text-sm text-red-600">{recipientError}</p>}
+          </div>
+        )}
 
         <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-zinc-900">View activity</h2>

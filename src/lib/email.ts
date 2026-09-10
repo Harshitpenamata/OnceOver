@@ -2,6 +2,11 @@ import { Resend } from "resend";
 
 const FROM = process.env.RESEND_FROM_EMAIL ?? "OnceOver <notifications@onceover.app>";
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export function isValidEmail(email: string): boolean {
+  return EMAIL_PATTERN.test(email);
+}
+
 // Lazily constructed so builds and routes that never send email don't require
 // RESEND_API_KEY to be set (the Resend constructor throws without one).
 function getResendClient(): Resend {

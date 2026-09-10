@@ -360,7 +360,109 @@ check(
   `statuses: ${otpRequestStatuses.join(",")}`
 );
 
-// --- 6. Approve/reject is opt-in, off by default ----------------------------
+// --- 6. Recipient management: add/remove access on an active share --------
+// Placed right after the OTP section and before the rate-limiting section
+// below (which deliberately exhausts the view: budget with a 25-request
+// burst) - a real view POST here would otherwise risk getting 429'd by that
+// unrelated section instead of exercising what this section actually tests.
+console.log("\n== Recipient management (add/remove) ==");
+const uploadManaged = await uploadShare(png, "qa-recipient-mgmt-test.png", "image/png", {
+  linkMode: "email",
+  recipientEmails: TEST_EMAIL,
+  expiresInHours: "1",
+});
+check("upload share for recipient-management test returns 201", uploadManaged.status === 201);
+const { share: shareManaged } = await uploadManaged.json();
+createdShareIds.push(shareManaged.id);
+
+const addDuplicateRes = await fetch(`${APP_URL}/api/shares/${shareManaged.id}/recipients`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ email: TEST_EMAIL }),
+});
+check("adding a duplicate recipient is rejected (409)", addDuplicateRes.status === 409);
+
+const addInvalidRes = await fetch(`${APP_URL}/api/shares/${shareManaged.id}/recipients`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ email: "not-an-email" }),
+});
+check("adding an invalid email is rejected (400)", addInvalidRes.status === 400);
+
+const addRes = await fetch(`${APP_URL}/api/shares/${shareManaged.id}/recipients`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+  body: JSON.stringify({ email: SECOND_EMAIL }),
+});
+check("adding a new recipient to an active share returns 201", addRes.status === 201, await addRes.clone().text());
+const { recipient: addedRecipient } = await addRes.json();
+
+const { recipients: listedAfterAdd } = await (
+  await fetch(`${APP_URL}/api/shares/${shareManaged.id}`, { headers: { Cookie: cookieHeader } })
+).json();
+check(
+  "the share detail fetch now lists both recipients",
+  listedAfterAdd.length === 2 && listedAfterAdd.some((r) => r.email === SECOND_EMAIL),
+  JSON.stringify(listedAfterAdd)
+);
+
+// The newly-added recipient gets real access: request and receive a code.
+const secondRecipientOtpReq = await fetch(`${APP_URL}/api/view/${shareManaged.token}/request-otp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: SECOND_EMAIL }),
+});
+check("the newly-added recipient can request a code", secondRecipientOtpReq.status === 200);
+const [pendingOtpRow] = await restQuery(
+  "share_otps",
+  `share_id=eq.${shareManaged.id}&recipient_email=eq.${encodeURIComponent(SECOND_EMAIL)}&order=created_at.desc&limit=1&select=code`
+);
+const pendingCode = pendingOtpRow?.code;
+check("a pending code exists for the newly-added recipient", !!pendingCode, JSON.stringify(pendingOtpRow));
+
+// Now revoke that recipient's access before they've used the code.
+const removeRes = await fetch(`${APP_URL}/api/shares/${shareManaged.id}/recipients/${addedRecipient.id}`, {
+  method: "DELETE",
+  headers: { Cookie: cookieHeader },
+});
+check("removing a recipient returns 200", removeRes.status === 200);
+const recipientsAfterRemove = await restQuery(
+  "share_recipients",
+  `id=eq.${addedRecipient.id}&select=id`
+);
+check("the removed recipient row is gone", recipientsAfterRemove.length === 0);
+
+// The core correctness requirement: revocation must invalidate a code
+// already sitting in the removed recipient's inbox, not just block future
+// requests - otherwise "remove access" would be cosmetic.
+const revokedCodeView = await fetch(`${APP_URL}/api/view/${shareManaged.token}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: SECOND_EMAIL, code: pendingCode }),
+});
+check(
+  "a code already issued to the removed recipient stops working immediately",
+  revokedCodeView.status === 403,
+  `status: ${revokedCodeView.status}`
+);
+
+const revokedNewRequestRes = await fetch(`${APP_URL}/api/view/${shareManaged.token}/request-otp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: SECOND_EMAIL }),
+});
+check("the removed recipient can no longer request a new code either", revokedNewRequestRes.status === 403);
+
+// The remaining recipient (never touched) is unaffected by the other one
+// being added and then removed.
+const remainingRecipientReq = await fetch(`${APP_URL}/api/view/${shareManaged.token}/request-otp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: TEST_EMAIL }),
+});
+check("the original recipient's access is unaffected by the other one's removal", remainingRecipientReq.status === 200);
+
+// --- 7. Approve/reject is opt-in, off by default ----------------------------
 console.log("\n== Approve/reject decision (opt-in) ==");
 const uploadNoDecision = await uploadShare(png, "qa-no-decision-test.png", "image/png", {
   linkMode: "anyone",
@@ -404,7 +506,7 @@ check("submitting a decision on an opted-in share succeeds (200)", acceptedDecis
 const [decisionRow] = await restQuery("shares", `id=eq.${shareWithDecision.id}&select=decision`);
 check("the decision persisted as approved", decisionRow?.decision === "approved");
 
-// --- 7. View duration tracking: heartbeat + sendBeacon-style final update --
+// --- 8. View duration tracking: heartbeat + sendBeacon-style final update --
 // Runs before the rate-limiting section below, which deliberately exhausts
 // the view-route budget with a 25-request burst - placed after that instead,
 // a single ordinary view POST here would get 429'd by an unrelated section.
@@ -464,7 +566,7 @@ const wrongTokenRes = await fetch(`${APP_URL}/api/view/nonexistent-token-for-hea
 });
 check("a heartbeat for a nonexistent share token is rejected (404)", wrongTokenRes.status === 404);
 
-// --- 8. Rate limiting: the view route is capped at 20 requests/min/IP ------
+// --- 9. Rate limiting: the view route is capped at 20 requests/min/IP ------
 console.log("\n== Rate limiting ==");
 const uploadRateLimit = await uploadShare(png, "qa-rate-limit-test.png", "image/png", {
   linkMode: "anyone",
@@ -507,7 +609,7 @@ check(
   `statuses: ${rateLimitStatuses.join(",")}`
 );
 
-// --- 9. Folders: create/rename/move/delete, files fall back to Unfiled -----
+// --- 10. Folders: create/rename/move/delete, files fall back to Unfiled ----
 console.log("\n== Folders ==");
 const createFolderRes = await fetch(`${APP_URL}/api/folders`, {
   method: "POST",
@@ -560,7 +662,7 @@ check(
   JSON.stringify(afterDeleteRow)
 );
 
-// --- 10. Rename and delete (single + bulk) ----------------------------------
+// --- 11. Rename and delete (single + bulk) ----------------------------------
 console.log("\n== Rename and delete ==");
 const uploadForRename = await uploadShare(png, "qa-rename-test.png", "image/png", {
   linkMode: "anyone",
