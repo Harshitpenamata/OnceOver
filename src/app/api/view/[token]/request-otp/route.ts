@@ -55,7 +55,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
   });
 
-  await sendOtpEmail({ to: recipient.email, filename: share.original_filename, code }).catch(() => {});
+  try {
+    await sendOtpEmail({ to: recipient.email, filename: share.original_filename, code });
+  } catch (err) {
+    console.error("Failed to send OTP email", err);
+    return NextResponse.json(
+      { error: "Could not send the code - please try again" },
+      { status: 502 }
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }

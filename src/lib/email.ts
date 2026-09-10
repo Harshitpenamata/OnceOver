@@ -1,4 +1,4 @@
-import { Resend } from "resend";
+import { Resend, type CreateEmailOptions } from "resend";
 
 const FROM = process.env.RESEND_FROM_EMAIL ?? "OnceOver <notifications@onceover.app>";
 
@@ -13,6 +13,19 @@ function getResendClient(): Resend {
   return new Resend(process.env.RESEND_API_KEY);
 }
 
+// Resend's SDK never rejects/throws - every failure (a rejected send, a
+// network error, anything) resolves as { data: null, error }. Every
+// `.catch()` at every call site of these functions was therefore dead code:
+// none of them could ever have observed a send failure. This turns a real
+// failure into a real rejection so those `.catch()`s (and the OTP retry
+// below) actually do something.
+async function send(payload: CreateEmailOptions): Promise<void> {
+  const { error } = await getResendClient().emails.send(payload);
+  if (error) {
+    throw new Error(`Resend error (${error.name ?? "unknown"}): ${error.message ?? JSON.stringify(error)}`);
+  }
+}
+
 export async function sendViewNotification(opts: {
   to: string;
   filename: string;
@@ -25,7 +38,7 @@ export async function sendViewNotification(opts: {
   const { to, filename, viewerIdentity, viewedAt, viewCount, maxViews, dashboardUrl } = opts;
   const remaining = maxViews ? Math.max(0, maxViews - viewCount) : null;
 
-  await getResendClient().emails.send({
+  await send({
     from: FROM,
     to,
     subject: `${filename} was just opened`,
@@ -45,8 +58,7 @@ export async function sendViewNotification(opts: {
 
 export async function sendOtpEmail(opts: { to: string; filename: string; code: string }) {
   const { to, filename, code } = opts;
-
-  await getResendClient().emails.send({
+  const payload: CreateEmailOptions = {
     from: FROM,
     to,
     subject: `Your code to view ${filename}`,
@@ -55,7 +67,18 @@ export async function sendOtpEmail(opts: { to: string; filename: string; code: s
       <p style="font-size: 32px; font-weight: 700; letter-spacing: 4px;">${escapeHtml(code)}</p>
       <p>This code expires in 10 minutes and can only be used once.</p>
     `,
-  });
+  };
+
+  // This is the one send on a user-blocking path - the recipient is looking
+  // at a "check your inbox" screen waiting on it - so it gets one immediate
+  // retry instead of surfacing the first failure straight away. A transient
+  // hiccup on the very first attempt is the most common real-world failure
+  // mode here.
+  try {
+    await send(payload);
+  } catch {
+    await send(payload);
+  }
 }
 
 export async function sendCommentNotification(opts: {
@@ -67,7 +90,7 @@ export async function sendCommentNotification(opts: {
 }) {
   const { to, filename, authorName, body, dashboardUrl } = opts;
 
-  await getResendClient().emails.send({
+  await send({
     from: FROM,
     to,
     subject: `New comment on ${filename}`,

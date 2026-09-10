@@ -30,6 +30,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
   const [identity, setIdentity] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -116,6 +117,12 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileUrl]);
 
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendCooldown]);
+
   async function loadComments() {
     const res = await fetch(`/api/view/${token}/comments`);
     if (res.ok) setComments((await res.json()).comments);
@@ -139,6 +146,28 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
       return;
     }
     setCodeSent(true);
+    setResendCooldown(30);
+  }
+
+  async function handleResendCode() {
+    if (resendCooldown > 0 || loading) return;
+    setError(null);
+    setLoading(true);
+
+    const res = await fetch(`/api/view/${token}/request-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: identity.trim() }),
+    });
+
+    setLoading(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Could not resend the code");
+      return;
+    }
+    setCode("");
+    setResendCooldown(30);
   }
 
   async function handleOpen(e: React.FormEvent) {
@@ -251,17 +280,28 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
                 placeholder="000000"
                 className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-center text-lg tracking-[0.5em] text-white outline-none focus:border-zinc-400"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  setCodeSent(false);
-                  setCode("");
-                  setError(null);
-                }}
-                className="mt-2 text-xs text-zinc-500 underline hover:text-zinc-300"
-              >
-                Use a different email
-              </button>
+              <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
+                <button
+                  type="button"
+                  onClick={handleResendCode}
+                  disabled={resendCooldown > 0 || loading}
+                  className="underline hover:text-zinc-300 disabled:cursor-not-allowed disabled:text-zinc-700 disabled:no-underline"
+                >
+                  {resendCooldown > 0 ? `Resend code (${resendCooldown}s)` : "Resend code"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCodeSent(false);
+                    setCode("");
+                    setError(null);
+                    setResendCooldown(0);
+                  }}
+                  className="underline hover:text-zinc-300"
+                >
+                  Use a different email
+                </button>
+              </div>
             </>
           ) : (
             <>
