@@ -63,8 +63,13 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-zinc-200 py-6 text-center text-sm text-zinc-400">
-        Built for freelance designers, production houses, and studios who need control over who
-        sees what, for how long.
+        <p>
+          Built for freelance designers, production houses, and studios who need control over who
+          sees what, for how long.
+        </p>
+        <Link href="/privacy" className="mt-2 inline-block underline hover:text-zinc-600">
+          Privacy Policy
+        </Link>
       </footer>
     </div>
   );
