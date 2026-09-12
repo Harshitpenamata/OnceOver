@@ -39,6 +39,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
   const [commentBody, setCommentBody] = useState("");
   const [commentName, setCommentName] = useState("");
   const objectUrlRef = useRef<string | null>(null);
+  const viewerProofRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const accumulatedSecondsRef = useRef(0);
   const visibleSinceRef = useRef<number | null>(null);
@@ -123,8 +124,14 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     return () => clearTimeout(id);
   }, [resendCooldown]);
 
+  // Only set for email-locked shares (see handleOpen) - proves to the
+  // comments/decision endpoints that this viewer already passed OTP.
+  function viewerProofHeaders(): HeadersInit {
+    return viewerProofRef.current ? { "X-Viewer-Proof": viewerProofRef.current } : {};
+  }
+
   async function loadComments() {
-    const res = await fetch(`/api/view/${token}/comments`);
+    const res = await fetch(`/api/view/${token}/comments`, { headers: viewerProofHeaders() });
     if (res.ok) setComments((await res.json()).comments);
   }
 
@@ -192,6 +199,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     }
 
     sessionIdRef.current = res.headers.get("X-View-Session-Id");
+    viewerProofRef.current = res.headers.get("X-Viewer-Proof");
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     objectUrlRef.current = url;
@@ -204,7 +212,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     if (!meta) return;
     const res = await fetch(`/api/shares/${meta.id}/decision`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...viewerProofHeaders() },
       body: JSON.stringify({ token, decision: next }),
     });
     if (res.ok) setDecision(next);
@@ -215,7 +223,7 @@ export default function ViewerPage({ params }: { params: Promise<{ token: string
     if (!commentBody.trim()) return;
     const res = await fetch(`/api/view/${token}/comments`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...viewerProofHeaders() },
       body: JSON.stringify({ authorName: commentName || "Recipient", body: commentBody }),
     });
     if (res.ok) {

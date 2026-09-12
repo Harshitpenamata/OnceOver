@@ -5,6 +5,7 @@ import { watermarkImage, watermarkPdf, buildWatermarkLabel } from "@/lib/waterma
 import { sendViewNotification } from "@/lib/email";
 import { isExpired } from "@/lib/expiry";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { issueViewerProof } from "@/lib/viewer-verification";
 
 // Metadata for the gate page (identity prompt / expired state) - no file bytes yet.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
@@ -137,6 +138,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // Lets the viewer page report how long this specific view session
       // stayed open via the heartbeat route below.
       ...(viewRow ? { "X-View-Session-Id": viewRow.id } : {}),
+      // For email-locked shares, proves to the comments/decision endpoints
+      // that this viewer already passed OTP - those can't re-verify the code
+      // themselves since verify_share_otp consumes it on first use.
+      ...(share.link_mode === "email" ? { "X-Viewer-Proof": issueViewerProof(share.id, identity) } : {}),
     },
   });
 }

@@ -2,13 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendCommentNotification } from "@/lib/email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { verifyViewerProof } from "@/lib/viewer-verification";
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const admin = createAdminClient();
 
-  const { data: share } = await admin.from("shares").select("id").eq("token", token).single();
+  const { data: share } = await admin.from("shares").select("id, link_mode").eq("token", token).single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Email-locked shares gate the file behind OTP - comments must match that,
+  // or anyone who obtained the link without being the invited recipient
+  // could read (and, in POST below, post as) the recipient's thread.
+  if (share.link_mode === "email" && !verifyViewerProof(request.headers.get("x-viewer-proof"), share.id)) {
+    return NextResponse.json({ error: "Verification required" }, { status: 403 });
+  }
 
   const { data: comments } = await admin
     .from("share_comments")
@@ -35,10 +43,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: share } = await admin
     .from("shares")
-    .select("id, owner_id, original_filename")
+    .select("id, owner_id, original_filename, link_mode")
     .eq("token", token)
     .single();
   if (!share) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (share.link_mode === "email" && !verifyViewerProof(request.headers.get("x-viewer-proof"), share.id)) {
+    return NextResponse.json({ error: "Verification required" }, { status: 403 });
+  }
 
   const { data: comment, error } = await admin
     .from("share_comments")

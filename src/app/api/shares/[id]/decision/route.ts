@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { verifyViewerProof } from "@/lib/viewer-verification";
 
 // Recipients aren't authenticated Supabase users, so decisions are recorded
 // via the admin client after validating the share token supplied by the client.
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: share } = await admin
     .from("shares")
-    .select("id, token, require_decision")
+    .select("id, token, require_decision, link_mode")
     .eq("id", id)
     .single();
 
@@ -30,6 +31,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   if (!share.require_decision) {
     return NextResponse.json({ error: "This share doesn't request a decision" }, { status: 400 });
+  }
+  // The token alone is the intended proof for "anyone" links, but an
+  // email-locked share's decision is meant to be attributable to the
+  // verified recipient, not just whoever holds the link.
+  if (share.link_mode === "email" && !verifyViewerProof(request.headers.get("x-viewer-proof"), share.id)) {
+    return NextResponse.json({ error: "Verification required" }, { status: 403 });
   }
 
   const { error } = await admin.from("shares").update({ decision }).eq("id", id);

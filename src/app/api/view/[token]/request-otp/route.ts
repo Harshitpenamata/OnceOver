@@ -5,6 +5,14 @@ import { generateOtpCode } from "@/lib/otp";
 import { sendOtpEmail } from "@/lib/email";
 import { isExpired } from "@/lib/expiry";
 
+// Postgres's default LIKE/ILIKE escape character is backslash - escaping it
+// plus the two wildcard metacharacters turns the pattern into a plain
+// case-insensitive literal match, so a supplied "%" or "_" can't be used to
+// probe for which recipient emails exist on this share.
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 // Sends a one-time code to the recipient's inbox before an email-locked
 // share can be opened - proves the viewer controls that inbox, not just
 // that they know or guessed the address (a bare string match can't tell
@@ -34,7 +42,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     .from("share_recipients")
     .select("email")
     .eq("share_id", share.id)
-    .ilike("email", email.trim())
+    .ilike("email", escapeLikePattern(email.trim()))
     .maybeSingle();
   if (!recipient) {
     return NextResponse.json({ error: "This link is restricted to specific recipients" }, { status: 403 });
